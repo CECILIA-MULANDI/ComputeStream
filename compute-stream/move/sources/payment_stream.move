@@ -1,6 +1,7 @@
 module computestream::payment_stream {
   use std::signer;
   use computestream::escrow;
+  use aptos_framework::table::{Self, Table};
 
   /// Error codes
   const E_STREAM_NOT_FOUND: u64 = 1;
@@ -10,7 +11,7 @@ module computestream::payment_stream {
   const E_INVALID_RATE: u64 = 5;
 
   /// Payment stream for continuous micropayments
-  struct Stream has key, store, drop {
+  struct Stream has store, drop {
     job_id: u64,
     payer_address: address,
     payee_address: address,
@@ -21,6 +22,11 @@ module computestream::payment_stream {
     is_active: bool,
   }
 
+  /// Container for storing multiple streams per payer
+  struct StreamStore has key {
+    streams: Table<u64, Stream>,
+  }
+
   /// Open a new payment stream
   public entry fun open_stream(
     payer: &signer,
@@ -28,14 +34,24 @@ module computestream::payment_stream {
     payee_address: address,
     rate_per_second: u64,
     start_time: u64,
-  ) {
+  ) acquires StreamStore {
     let payer_addr = signer::address_of(payer);
     
     // Validate rate
     assert!(rate_per_second > 0, E_INVALID_RATE);
     
-    // Check if stream already exists
-    assert!(!exists<Stream>(payer_addr), E_STREAM_ALREADY_EXISTS);
+    // Initialize stream store if it doesn't exist
+    if (!exists<StreamStore>(payer_addr)) {
+      move_to(payer, StreamStore {
+        streams: table::new(),
+      });
+    };
+    
+    // Get stream store
+    let stream_store = borrow_global_mut<StreamStore>(payer_addr);
+    
+    // Check if stream already exists for this job
+    assert!(!table::contains(&stream_store.streams, job_id), E_STREAM_ALREADY_EXISTS);
     
     // Create stream
     let stream = Stream {
@@ -49,18 +65,23 @@ module computestream::payment_stream {
       is_active: true,
     };
     
-    move_to(payer, stream);
+    // Store stream in table
+    table::add(&mut stream_store.streams, job_id, stream);
   }
 
   /// Process payment (called every second by x402 protocol)
   /// This actually transfers coins from escrow to provider
   public entry fun process_payment(
     payer: &signer,
+    job_id: u64,
     current_time: u64,
-  ) acquires Stream {
+  ) acquires StreamStore {
     let payer_addr = signer::address_of(payer);
     
-    let stream = borrow_global_mut<Stream>(payer_addr);
+    let stream_store = borrow_global_mut<StreamStore>(payer_addr);
+    assert!(table::contains(&stream_store.streams, job_id), E_STREAM_NOT_FOUND);
+    
+    let stream = table::borrow_mut(&mut stream_store.streams, job_id);
     
     // Verify stream is active
     assert!(stream.is_active, E_STREAM_NOT_ACTIVE);
@@ -76,18 +97,22 @@ module computestream::payment_stream {
       stream.total_streamed = stream.total_streamed + payment_amount;
       
       // Actually release payment from escrow to provider
-      escrow::release_payment(payer, payment_amount);
+      escrow::release_payment(payer, job_id, payment_amount);
     };
   }
 
   /// Close stream (when job completes or fails)
   public entry fun close_stream(
     payer: &signer,
+    job_id: u64,
     final_time: u64,
-  ) acquires Stream {
+  ) acquires StreamStore {
     let payer_addr = signer::address_of(payer);
     
-    let stream = borrow_global_mut<Stream>(payer_addr);
+    let stream_store = borrow_global_mut<StreamStore>(payer_addr);
+    assert!(table::contains(&stream_store.streams, job_id), E_STREAM_NOT_FOUND);
+    
+    let stream = table::borrow_mut(&mut stream_store.streams, job_id);
     
     // Process final payment
     if (stream.is_active && final_time > stream.last_claimed_time) {
@@ -97,7 +122,7 @@ module computestream::payment_stream {
       stream.last_claimed_time = final_time;
       
       // Release final payment
-      escrow::release_payment(payer, final_payment);
+      escrow::release_payment(payer, job_id, final_payment);
     };
     
     // Mark stream as inactive
@@ -107,11 +132,15 @@ module computestream::payment_stream {
   /// Pause stream (emergency stop)
   public entry fun pause_stream(
     payer: &signer,
+    job_id: u64,
     pause_time: u64,
-  ) acquires Stream {
+  ) acquires StreamStore {
     let payer_addr = signer::address_of(payer);
     
-    let stream = borrow_global_mut<Stream>(payer_addr);
+    let stream_store = borrow_global_mut<StreamStore>(payer_addr);
+    assert!(table::contains(&stream_store.streams, job_id), E_STREAM_NOT_FOUND);
+    
+    let stream = table::borrow_mut(&mut stream_store.streams, job_id);
     
     // Process payment up to pause time
     if (stream.is_active && pause_time > stream.last_claimed_time) {
@@ -121,7 +150,7 @@ module computestream::payment_stream {
       stream.last_claimed_time = pause_time;
       
       // Release payment before pausing
-      escrow::release_payment(payer, payment_amount);
+      escrow::release_payment(payer, job_id, payment_amount);
     };
     
     stream.is_active = false;
@@ -130,11 +159,15 @@ module computestream::payment_stream {
   /// Resume stream
   public entry fun resume_stream(
     payer: &signer,
+    job_id: u64,
     resume_time: u64,
-  ) acquires Stream {
+  ) acquires StreamStore {
     let payer_addr = signer::address_of(payer);
     
-    let stream = borrow_global_mut<Stream>(payer_addr);
+    let stream_store = borrow_global_mut<StreamStore>(payer_addr);
+    assert!(table::contains(&stream_store.streams, job_id), E_STREAM_NOT_FOUND);
+    
+    let stream = table::borrow_mut(&mut stream_store.streams, job_id);
     
     stream.is_active = true;
     stream.last_claimed_time = resume_time;
@@ -142,8 +175,12 @@ module computestream::payment_stream {
 
   // View functions
   #[view]
-  public fun get_stream(payer_address: address): (u64, address, u64, u64, u64, bool) acquires Stream {
-    let stream = borrow_global<Stream>(payer_address);
+  public fun get_stream(payer_address: address, job_id: u64): (u64, address, u64, u64, u64, bool) acquires StreamStore {
+    assert!(exists<StreamStore>(payer_address), E_STREAM_NOT_FOUND);
+    let stream_store = borrow_global<StreamStore>(payer_address);
+    assert!(table::contains(&stream_store.streams, job_id), E_STREAM_NOT_FOUND);
+    
+    let stream = table::borrow(&stream_store.streams, job_id);
     (
       stream.job_id,
       stream.payee_address,
@@ -155,14 +192,22 @@ module computestream::payment_stream {
   }
 
   #[view]
-  public fun get_total_streamed(payer_address: address): u64 acquires Stream {
-    let stream = borrow_global<Stream>(payer_address);
+  public fun get_total_streamed(payer_address: address, job_id: u64): u64 acquires StreamStore {
+    assert!(exists<StreamStore>(payer_address), E_STREAM_NOT_FOUND);
+    let stream_store = borrow_global<StreamStore>(payer_address);
+    assert!(table::contains(&stream_store.streams, job_id), E_STREAM_NOT_FOUND);
+    
+    let stream = table::borrow(&stream_store.streams, job_id);
     stream.total_streamed
   }
 
   #[view]
-  public fun calculate_current_amount(payer_address: address, current_time: u64): u64 acquires Stream {
-    let stream = borrow_global<Stream>(payer_address);
+  public fun calculate_current_amount(payer_address: address, job_id: u64, current_time: u64): u64 acquires StreamStore {
+    assert!(exists<StreamStore>(payer_address), E_STREAM_NOT_FOUND);
+    let stream_store = borrow_global<StreamStore>(payer_address);
+    assert!(table::contains(&stream_store.streams, job_id), E_STREAM_NOT_FOUND);
+    
+    let stream = table::borrow(&stream_store.streams, job_id);
     
     if (!stream.is_active) {
       return stream.total_streamed
@@ -174,12 +219,17 @@ module computestream::payment_stream {
   }
 
   #[view]
-  public fun is_stream_active(payer_address: address): bool acquires Stream {
-    if (!exists<Stream>(payer_address)) {
+  public fun is_stream_active(payer_address: address, job_id: u64): bool acquires StreamStore {
+    if (!exists<StreamStore>(payer_address)) {
       return false
     };
     
-    let stream = borrow_global<Stream>(payer_address);
+    let stream_store = borrow_global<StreamStore>(payer_address);
+    if (!table::contains(&stream_store.streams, job_id)) {
+      return false
+    };
+    
+    let stream = table::borrow(&stream_store.streams, job_id);
     stream.is_active
   }
 }
