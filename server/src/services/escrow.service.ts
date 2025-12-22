@@ -1,6 +1,6 @@
 
 import { Account } from "@aptos-labs/ts-sdk";
-import { BlockchainService } from "./blockchain.service";
+import { BlockchainService } from "./blockchain.service.js";
 
 export interface EscrowInfo {
   jobId: number;

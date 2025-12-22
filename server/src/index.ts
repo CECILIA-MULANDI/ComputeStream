@@ -2,18 +2,30 @@ import express from "express";
 import cors from "cors";
 import { x402Paywall } from "x402plus";
 import "dotenv/config";
-import providerRoutes from "./routes/providers.routes";
-import jobRoutes from "./routes/jobs.routes";
-import escrowRoutes from "./routes/escrow.routes";
-import paymentStreamRoutes, { paymentOrchestrator } from "./routes/payment-stream.routes";
-import x402ComputeRoutes from "./routes/x402-compute.routes";
+import providerRoutes from "./routes/providers.routes.js";
+import jobRoutes from "./routes/jobs.routes.js";
+import escrowRoutes from "./routes/escrow.routes.js";
+import paymentStreamRoutes, { paymentOrchestrator } from "./routes/payment-stream.routes.js";
+import x402ComputeRoutes from "./routes/x402-compute.routes.js";
+
+// Validate required environment variables
+const requiredEnvVars = ["MOVEMENT_RPC_URL", "MOVEMENT_PAY_TO"];
+const missingEnvVars = requiredEnvVars.filter((key) => !process.env[key]);
+
+if (missingEnvVars.length > 0) {
+  console.error("❌ Missing required environment variables:");
+  missingEnvVars.forEach((key) => console.error(`   - ${key}`));
+  console.error("\nPlease set these in your .env file or environment.");
+  process.exit(1);
+}
 
 const app = express();
 const PORT = process.env.PORT || 4402;
 
 app.use(cors({
   origin: "http://localhost:3000",
-  exposedHeaders: ["X-PAYMENT-RESPONSE"]
+  // Support both v1 (X-PAYMENT-RESPONSE) and v2 (PAYMENT-RESPONSE) headers
+  exposedHeaders: ["X-PAYMENT-RESPONSE", "PAYMENT-RESPONSE", "PAYMENT-REQUIRED"]
 }));
 
 // x402 Paywall middleware - Novel use: Compute resource access via x402

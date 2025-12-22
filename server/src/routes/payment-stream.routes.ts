@@ -1,8 +1,8 @@
 // server/src/routes/payment-stream.routes.ts
 import express from "express";
-import { PaymentStreamService } from "../services/payment-stream.service";
-import { BlockchainService } from "../services/blockchain.service";
-import { PaymentOrchestratorService } from "../services/payment-orchestrator.service";
+import { PaymentStreamService } from "../services/payment-stream.service.js";
+import { BlockchainService } from "../services/blockchain.service.js";
+import { PaymentOrchestratorService } from "../services/payment-orchestrator.service.js";
 
 const router = express.Router();
 

@@ -12,7 +12,8 @@ build/
 dist/
 .next/
 out/
-
+./PRODUCTION_READINESS.md
+PRODUCTION_READINESS.md
 # Environment variables
 .env
 .env.local
@@ -55,4 +56,9 @@ docker-compose.override.yml
 *.tmp
 *.temp
 .cache/
+
+# Ignore all .md files except README.md
+*.md
+!README.md
+!**/README.md
 

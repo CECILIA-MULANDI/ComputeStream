@@ -1,6 +1,6 @@
 // server/src/services/payment-orchestrator.service.ts
-import { BlockchainService } from "./blockchain.service";
-import { PaymentStreamService } from "./payment-stream.service";
+import { BlockchainService } from "./blockchain.service.js";
+import { PaymentStreamService } from "./payment-stream.service.js";
 import { Account } from "@aptos-labs/ts-sdk";
 
 export interface ActiveStream {

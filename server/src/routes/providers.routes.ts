@@ -1,7 +1,7 @@
 
 import express from "express";
-import { ProviderService } from "../services/provider.service";
-import { BlockchainService } from "../services/blockchain.service";
+import { ProviderService } from "../services/provider.service.js";
+import { BlockchainService } from "../services/blockchain.service.js";
 
 const router = express.Router();
 

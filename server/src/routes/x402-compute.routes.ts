@@ -1,11 +1,11 @@
 
 
 import express from "express";
-import { ProviderService } from "../services/provider.service";
-import { JobService } from "../services/job.service";
-import { PaymentStreamService } from "../services/payment-stream.service";
-import { X402IntegrationService } from "../services/x402-integration.service";
-import { BlockchainService } from "../services/blockchain.service";
+import { ProviderService } from "../services/provider.service.js";
+import { JobService } from "../services/job.service.js";
+import { PaymentStreamService } from "../services/payment-stream.service.js";
+import { X402IntegrationService } from "../services/x402-integration.service.js";
+import { BlockchainService } from "../services/blockchain.service.js";
 
 const router = express.Router();
 

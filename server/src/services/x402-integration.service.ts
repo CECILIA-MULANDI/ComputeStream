@@ -11,9 +11,9 @@
  * - Compute resources are monetized via x402 payment rails
  */
 
-import { ProviderService } from "./provider.service";
-import { JobService } from "./job.service";
-import { PaymentStreamService } from "./payment-stream.service";
+import { ProviderService } from "./provider.service.js";
+import { JobService } from "./job.service.js";
+import { PaymentStreamService } from "./payment-stream.service.js";
 
 export interface ComputeResourceAccess {
   providerAddress: string;
