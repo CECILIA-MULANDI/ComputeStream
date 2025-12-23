@@ -264,4 +264,12 @@ module computestream::job_registry{
     let job = table::borrow(&job_store.jobs, job_id);
     job.output_url
   }
+
+  /// Get the current job counter value (next job ID will be this value)
+  #[view]
+  public fun get_job_counter(): u64 acquires JobCounter {
+    assert!(exists<JobCounter>(@computestream), E_JOB_NOT_FOUND);
+    let counter = borrow_global<JobCounter>(@computestream);
+    counter.count
+  }
 }

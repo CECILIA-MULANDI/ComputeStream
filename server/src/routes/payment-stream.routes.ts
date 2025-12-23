@@ -1,5 +1,9 @@
 // server/src/routes/payment-stream.routes.ts
 import express from "express";
+import { 
+  strictLimiter, 
+  generalLimiter 
+} from "../middleware/rate-limiter.middleware.js";
 import { PaymentStreamService } from "../services/payment-stream.service.js";
 import { BlockchainService } from "../services/blockchain.service.js";
 import { PaymentOrchestratorService } from "../services/payment-orchestrator.service.js";
@@ -30,7 +34,7 @@ export { paymentOrchestrator };
  *   "startTime": 1234567890 (optional)
  * }
  */
-router.post("/open", async (req, res) => {
+router.post("/open", strictLimiter, async (req, res) => {
   try {
     const { privateKey, jobId, payeeAddress, ratePerSecond, startTime } = req.body;
 
@@ -80,7 +84,7 @@ router.post("/open", async (req, res) => {
  * GET /api/v1/payments/stream/:payerAddress/:jobId
  * Get stream information
  */
-router.get("/:payerAddress/:jobId", async (req, res) => {
+router.get("/:payerAddress/:jobId", generalLimiter, async (req, res) => {
   try {
     const { payerAddress, jobId } = req.params;
 
@@ -119,7 +123,7 @@ router.get("/:payerAddress/:jobId", async (req, res) => {
  * GET /api/v1/payments/stream/:payerAddress/:jobId/total
  * Get total amount streamed
  */
-router.get("/:payerAddress/:jobId/total", async (req, res) => {
+router.get("/:payerAddress/:jobId/total", generalLimiter, async (req, res) => {
   try {
     const { payerAddress, jobId } = req.params;
     const totalStreamed = await paymentStreamService.getTotalStreamed(
@@ -147,7 +151,7 @@ router.get("/:payerAddress/:jobId/total", async (req, res) => {
  * GET /api/v1/payments/stream/:payerAddress/:jobId/current
  * Calculate current amount (including pending)
  */
-router.get("/:payerAddress/:jobId/current", async (req, res) => {
+router.get("/:payerAddress/:jobId/current", generalLimiter, async (req, res) => {
   try {
     const { payerAddress, jobId } = req.params;
     const currentTime = Math.floor(Date.now() / 1000);
@@ -178,7 +182,7 @@ router.get("/:payerAddress/:jobId/current", async (req, res) => {
  * GET /api/v1/payments/stream/:payerAddress/:jobId/active
  * Check if stream is active
  */
-router.get("/:payerAddress/:jobId/active", async (req, res) => {
+router.get("/:payerAddress/:jobId/active", generalLimiter, async (req, res) => {
   try {
     const { payerAddress, jobId } = req.params;
     const isActive = await paymentStreamService.isStreamActive(payerAddress, Number(jobId));
@@ -205,7 +209,7 @@ router.get("/:payerAddress/:jobId/active", async (req, res) => {
  *   "currentTime": 1234567890 (optional)
  * }
  */
-router.post("/:payerAddress/:jobId/process", async (req, res) => {
+router.post("/:payerAddress/:jobId/process", strictLimiter, async (req, res) => {
   try {
     const { payerAddress, jobId } = req.params;
     const { privateKey, currentTime } = req.body;
@@ -250,7 +254,7 @@ router.post("/:payerAddress/:jobId/process", async (req, res) => {
  *   "finalTime": 1234567890 (optional)
  * }
  */
-router.post("/:payerAddress/:jobId/close", async (req, res) => {
+router.post("/:payerAddress/:jobId/close", strictLimiter, async (req, res) => {
   try {
     const { payerAddress, jobId } = req.params;
     const { privateKey, finalTime } = req.body;
@@ -294,7 +298,7 @@ router.post("/:payerAddress/:jobId/close", async (req, res) => {
  *   "pauseTime": 1234567890 (optional)
  * }
  */
-router.post("/:payerAddress/:jobId/pause", async (req, res) => {
+router.post("/:payerAddress/:jobId/pause", strictLimiter, async (req, res) => {
   try {
     const { payerAddress, jobId } = req.params;
     const { privateKey, pauseTime } = req.body;
@@ -338,7 +342,7 @@ router.post("/:payerAddress/:jobId/pause", async (req, res) => {
  *   "resumeTime": 1234567890 (optional)
  * }
  */
-router.post("/:payerAddress/:jobId/resume", async (req, res) => {
+router.post("/:payerAddress/:jobId/resume", strictLimiter, async (req, res) => {
   try {
     const { payerAddress, jobId } = req.params;
     const { privateKey, resumeTime } = req.body;
@@ -380,7 +384,7 @@ router.post("/:payerAddress/:jobId/resume", async (req, res) => {
  * GET /api/v1/payments/stream/orchestrator/status
  * Get orchestrator status
  */
-router.get("/orchestrator/status", (_req, res) => {
+router.get("/orchestrator/status", generalLimiter, (_req, res) => {
   try {
     const status = paymentOrchestrator.getStatus();
     res.json({

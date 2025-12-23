@@ -33,12 +33,33 @@ export class JobService {
   constructor(private blockchain: BlockchainService) {}
 
   /**
+   * Get the current job counter (next job ID will be this value)
+   * @returns Current job counter value
+   */
+  async getJobCounter(): Promise<number> {
+    try {
+      const result = await this.blockchain.callViewFunction(
+        this.MODULE_NAME,
+        "get_job_counter",
+        []
+      );
+      return Number(result);
+    } catch (error: any) {
+      // If counter doesn't exist yet, return 0
+      if (error.message.includes("not found") || error.message.includes("does not exist")) {
+        return 0;
+      }
+      throw error;
+    }
+  }
+
+  /**
    * Create a new job
    * @param buyer - The buyer's account
    * @param params - Job creation parameters
-   * @returns Transaction hash
+   * @returns Transaction hash and job ID
    */
-  async createJob(buyer: Account, params: CreateJobParams): Promise<string> {
+  async createJob(buyer: Account, params: CreateJobParams): Promise<{ hash: string; jobId: number }> {
     // Validate parameters
     if (!params.providerAddress || params.providerAddress.trim() === "") {
       throw new Error("Provider address is required");
@@ -52,6 +73,10 @@ export class JobService {
     if (params.maxDuration <= 0) {
       throw new Error("Max duration must be greater than 0");
     }
+
+    // Get the current job counter to know what the job ID will be
+    const currentCounter = await this.getJobCounter();
+    const jobId = currentCounter;
 
     const args = [
       params.providerAddress,
@@ -68,7 +93,7 @@ export class JobService {
       true
     );
 
-    return result.hash;
+    return { hash: result.hash, jobId };
   }
 
   /**

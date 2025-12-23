@@ -3,9 +3,18 @@
 import express from "express";
 import { ProviderService } from "../services/provider.service.js";
 import { JobService } from "../services/job.service.js";
+import { EscrowService } from "../services/escrow.service.js";
 import { PaymentStreamService } from "../services/payment-stream.service.js";
+import { PaymentOrchestratorService } from "../services/payment-orchestrator.service.js";
 import { X402IntegrationService } from "../services/x402-integration.service.js";
 import { BlockchainService } from "../services/blockchain.service.js";
+import { providerRegistry } from "../services/provider-registry.service.js";
+import { 
+  strictLimiter, 
+  veryStrictLimiter, 
+  discoveryLimiter,
+  generalLimiter 
+} from "../middleware/rate-limiter.middleware.js";
 
 const router = express.Router();
 
@@ -13,7 +22,12 @@ const router = express.Router();
 const blockchainService = new BlockchainService();
 const providerService = new ProviderService(blockchainService);
 const jobService = new JobService(blockchainService);
+const escrowService = new EscrowService(blockchainService);
 const paymentStreamService = new PaymentStreamService(blockchainService);
+const paymentOrchestrator = new PaymentOrchestratorService(
+  blockchainService,
+  paymentStreamService
+);
 const x402Integration = new X402IntegrationService(
   providerService,
   jobService,
@@ -32,7 +46,7 @@ const x402Integration = new X402IntegrationService(
  * 
  * After x402 payment is verified, this endpoint grants compute access.
  */
-router.get("/access/:providerAddress", async (req, res) => {
+router.get("/access/:providerAddress", strictLimiter, async (req, res) => {
   try {
     const { providerAddress } = req.params;
     const duration = parseInt(req.query.duration as string) || 60; // Default 60 seconds
@@ -85,12 +99,20 @@ router.get("/access/:providerAddress", async (req, res) => {
  * {
  *   "providerAddress": "0x...",
  *   "dockerImage": "my-job:latest",
- *   "duration": 3600
+ *   "duration": 3600,
+ *   "privateKey": "0x..." (optional - if provided, creates job automatically)
  * }
+ * 
+ * If privateKey is provided, this will:
+ * 1. Create job on-chain
+ * 2. Deposit escrow
+ * 3. Open payment stream
+ * 
+ * If privateKey is not provided, returns access granted and buyer can create job separately
  */
-router.post("/execute", async (req, res) => {
+router.post("/execute", veryStrictLimiter, async (req, res) => {
   try {
-    const { providerAddress, dockerImage, duration } = req.body;
+    const { providerAddress, dockerImage, duration, privateKey } = req.body;
 
     if (!providerAddress || !dockerImage) {
       return res.status(400).json({
@@ -101,32 +123,112 @@ router.post("/execute", async (req, res) => {
 
     // Get provider to calculate price
     const provider = await providerService.getProvider(providerAddress);
-    const estimatedPrice = provider.pricePerSecond * (duration || 3600);
+    const jobDuration = duration || 3600;
+    const estimatedPrice = provider.pricePerSecond * jobDuration;
+    const escrowAmount = estimatedPrice; // Use estimated price as escrow
 
     // If we reach here, x402 payment was verified
-    // Create and execute job
-    res.json({
-      success: true,
-      message: "Compute job execution initiated via x402 payment",
-      job: {
-        providerAddress,
-        dockerImage,
-        estimatedDuration: duration || 3600,
-        estimatedPrice,
-        estimatedPriceMOVE: estimatedPrice / 100000000,
-      },
-      x402Payment: {
-        verified: true,
-        protocol: "x402",
-        description: "AI agent paid for compute job execution using x402",
-      },
-      nextSteps: [
-        "Job will be created on-chain",
-        "Payment stream will be opened",
-        "Provider will execute the job",
-        "Results will be available via job output URL",
-      ],
-    });
+    // x402 payment is the access fee paid to platform
+    
+    // If private key is provided, create job and set up payment stream
+    if (privateKey) {
+      try {
+        // Create buyer account from private key
+        const buyer = blockchainService.createAccountFromPrivateKey(privateKey);
+        const buyerAddress = buyer.accountAddress.toString();
+
+        // 1. Create job on-chain
+        const { hash: createJobTxnHash, jobId } = await jobService.createJob(buyer, {
+          providerAddress,
+          dockerImage,
+          escrowAmount,
+          maxDuration: jobDuration,
+        });
+
+        // 2. Deposit escrow for the job
+        const depositEscrowTxnHash = await escrowService.depositEscrow(buyer, {
+          jobId,
+          providerAddress,
+          amount: escrowAmount,
+        });
+
+        // 3. Open payment stream (for per-second payments to provider)
+        const openStreamTxnHash = await paymentStreamService.openStream(buyer, {
+          jobId,
+          payeeAddress: providerAddress,
+          ratePerSecond: provider.pricePerSecond,
+        });
+
+        // 4. Register stream with orchestrator for automatic processing
+        paymentOrchestrator.registerStream(
+          buyerAddress,
+          jobId,
+          privateKey
+        );
+
+        res.json({
+          success: true,
+          message: "Compute job created and payment stream opened via x402 payment",
+          x402Payment: {
+            verified: true,
+            protocol: "x402",
+            description: "AI agent paid access fee using x402",
+          },
+          job: {
+            jobId,
+            buyerAddress,
+            transactionHash: createJobTxnHash,
+            providerAddress,
+            dockerImage,
+            duration: jobDuration,
+            estimatedPrice,
+            estimatedPriceMOVE: estimatedPrice / 100000000,
+          },
+          escrow: {
+            transactionHash: depositEscrowTxnHash,
+            amount: escrowAmount,
+            amountMOVE: escrowAmount / 100000000,
+          },
+          paymentStream: {
+            transactionHash: openStreamTxnHash,
+            ratePerSecond: provider.pricePerSecond,
+            ratePerSecondMOVE: provider.pricePerSecond / 100000000,
+            status: "active",
+            note: "Payment stream will process per-second payments automatically",
+          },
+        });
+      } catch (error: any) {
+        console.error("Error setting up job:", error);
+        return res.status(500).json({
+          error: "Failed to set up job",
+          details: error.message,
+        });
+      }
+    } else {
+      // No private key provided - just return access granted
+      res.json({
+        success: true,
+        message: "Compute access granted via x402 payment",
+        x402Payment: {
+          verified: true,
+          protocol: "x402",
+          description: "AI agent paid access fee using x402",
+        },
+        estimatedCost: {
+          providerAddress,
+          dockerImage,
+          estimatedDuration: jobDuration,
+          estimatedPrice,
+          estimatedPriceMOVE: estimatedPrice / 100000000,
+        },
+        nextSteps: [
+          "Provide privateKey to automatically create job, OR",
+          "Use /api/v1/jobs/create to create job manually",
+          "Deposit escrow using /api/v1/escrow/deposit",
+          "Open payment stream using /api/v1/payments/stream/open",
+        ],
+      });
+    }
   } catch (error: any) {
     console.error("Compute execute error:", error);
     res.status(500).json({
@@ -141,14 +243,57 @@ router.post("/execute", async (req, res) => {
  * 
  * This endpoint is free (no x402 required) to browse providers.
  * Actual compute access requires x402 payment.
+ * 
+ * Query params:
+ * - activeOnly: boolean (default: true) - only return active providers
  */
-router.get("/providers", async (_req, res) => {
+router.get("/providers", discoveryLimiter, async (req, res) => {
   try {
-    // In a real implementation, you'd query all providers
-    // For now, return a message
+    const activeOnly = req.query.activeOnly !== "false"; // Default to true
+    
+    // Get providers from registry
+    const providers = activeOnly 
+      ? providerRegistry.getActiveProviders()
+      : providerRegistry.getAllProviders();
+
+    // Sync with on-chain data
+    const syncedProviders = await Promise.all(
+      providers.map(async (provider) => {
+        try {
+          const onChainProvider = await providerService.getProvider(provider.address);
+          providerRegistry.updateProvider(provider.address, {
+            isActive: onChainProvider.isActive,
+            pricePerSecond: onChainProvider.pricePerSecond,
+          });
+          return {
+            address: provider.address,
+            gpuType: onChainProvider.gpuType,
+            vramGB: onChainProvider.vramGB,
+            pricePerSecond: onChainProvider.pricePerSecond,
+            pricePerSecondMOVE: onChainProvider.pricePerSecond / 100000000,
+            isActive: onChainProvider.isActive,
+            reputationScore: onChainProvider.reputationScore,
+          };
+        } catch (error: any) {
+          if (error.message.includes("not found")) {
+            providerRegistry.removeProvider(provider.address);
+            return null;
+          }
+          return {
+            ...provider,
+            pricePerSecondMOVE: provider.pricePerSecond / 100000000,
+          };
+        }
+      })
+    );
+
+    const validProviders = syncedProviders.filter(p => p !== null);
+
     res.json({
       success: true,
       message: "Browse available GPU providers",
+      count: validProviders.length,
+      providers: validProviders,
       note: "Use /api/v1/compute/access/:providerAddress with x402 payment to access compute",
       x402Integration: {
         enabled: true,
@@ -169,7 +314,7 @@ router.get("/providers", async (_req, res) => {
  * Explains how x402 is used in this compute marketplace
  * This is the KEY differentiator for the hackathon!
  */
-router.get("/x402-info", (_req, res) => {
+router.get("/x402-info", generalLimiter, (_req, res) => {
   res.json({
     success: true,
     hackathonSubmission: {

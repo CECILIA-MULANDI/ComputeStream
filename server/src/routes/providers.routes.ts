@@ -2,6 +2,13 @@
 import express from "express";
 import { ProviderService } from "../services/provider.service.js";
 import { BlockchainService } from "../services/blockchain.service.js";
+import { providerRegistry } from "../services/provider-registry.service.js";
+import { 
+  strictLimiter, 
+  veryStrictLimiter, 
+  discoveryLimiter,
+  generalLimiter 
+} from "../middleware/rate-limiter.middleware.js";
 
 const router = express.Router();
 
@@ -22,7 +29,7 @@ const providerService = new ProviderService(blockchainService);
  *   "stakeAmount": 100000000    // In Octas (min 0.1 MOVE)
  * }
  */
-router.post("/register", async (req, res) => {
+router.post("/register", veryStrictLimiter, async (req, res) => {
   try {
     const { privateKey, gpuType, vramGB, pricePerSecond, stakeAmount } = req.body;
 
@@ -46,16 +53,167 @@ router.post("/register", async (req, res) => {
       stakeAmount: Number(stakeAmount),
     });
 
+    const providerAddress = account.accountAddress.toString();
+
+    // Register in local registry for discovery
+    try {
+      const providerInfo = await providerService.getProvider(providerAddress);
+      providerRegistry.registerProvider({
+        address: providerAddress,
+        gpuType: providerInfo.gpuType,
+        vramGB: providerInfo.vramGB,
+        pricePerSecond: providerInfo.pricePerSecond,
+        isActive: providerInfo.isActive,
+        reputationScore: providerInfo.reputationScore,
+      });
+    } catch (error) {
+      // If we can't fetch provider info immediately, that's ok
+      // It will be synced when they query the list
+      console.warn("Could not register provider in local registry:", error);
+    }
+
     res.json({
       success: true,
       transactionHash: txnHash,
-      providerAddress: account.accountAddress.toString(),
+      providerAddress,
       message: "Provider registered successfully",
     });
   } catch (error: any) {
     console.error("Provider registration error:", error);
+    console.error("Error stack:", error.stack);
+    console.error("Error details:", {
+      message: error.message,
+      response: error.response,
+      data: error.data,
+      cause: error.cause,
+    });
+    
+    const statusCode = error.response?.status || error.statusCode || 500;
+    const errorMessage = error.message || "Failed to register provider";
+    
+    // Extract nested error messages if they exist
+    let details = error.response?.data || error.data || error.stack;
+    if (error.message && error.message.includes("Transaction execution failed")) {
+      // If it's a transaction error, include the full error message
+      details = error.message;
+    }
+    
+    // If it's an RPC timeout, provide helpful guidance
+    const isRpcTimeout = errorMessage.includes('RPC connection timeout') || errorMessage.includes('ETIMEDOUT');
+    
+    res.status(statusCode).json({
+      error: errorMessage,
+      details: typeof details === 'string' ? details : JSON.stringify(details),
+      ...(isRpcTimeout && {
+        suggestion: 'The Movement Network RPC endpoint may be temporarily unavailable. Please try again in a few minutes, or check if there is an alternative RPC endpoint available.',
+        rpcEndpoint: process.env.MOVEMENT_RPC_URL,
+      }),
+    });
+  }
+});
+
+/**
+ * GET /api/v1/providers/min-stake
+ * Get minimum stake amount required for registration
+ */
+router.get("/min-stake", discoveryLimiter, (_req, res) => {
+  res.json({
+    success: true,
+    minStakeAmount: providerService.getMinStakeAmount(),
+    minStakeAmountMOVE: providerService.getMinStakeAmount() / 100000000, // Convert to MOVE
+  });
+});
+
+/**
+ * GET /api/v1/providers/available
+ * List only active providers
+ */
+router.get("/available", discoveryLimiter, async (_req, res) => {
+  try {
+    // Get active providers from registry
+    const providers = providerRegistry.getActiveProviders();
+
+    res.json({
+      success: true,
+      count: providers.length,
+      activeOnly: true,
+      providers: providers.map(p => ({
+        ...p,
+        pricePerSecondMOVE: p.pricePerSecond / 100000000,
+      })),
+    });
+  } catch (error: any) {
+    console.error("List available providers error:", error);
     res.status(500).json({
-      error: error.message || "Failed to register provider",
+      error: error.message || "Failed to list available providers",
+    });
+  }
+});
+
+/**
+ * GET /api/v1/providers
+ * List all providers (discovery endpoint)
+ * 
+ * Query params:
+ * - activeOnly: boolean (default: false) - only return active providers
+ */
+router.get("/", discoveryLimiter, async (req, res) => {
+  try {
+    const activeOnly = req.query.activeOnly === "true";
+    
+    // Get providers from registry
+    const providers = activeOnly 
+      ? providerRegistry.getActiveProviders()
+      : providerRegistry.getAllProviders();
+
+    // Sync with on-chain data for accuracy
+    const syncedProviders = await Promise.all(
+      providers.map(async (provider) => {
+        try {
+          const onChainProvider = await providerService.getProvider(provider.address);
+          // Update registry with latest on-chain data
+          providerRegistry.updateProvider(provider.address, {
+            isActive: onChainProvider.isActive,
+            pricePerSecond: onChainProvider.pricePerSecond,
+            reputationScore: onChainProvider.reputationScore,
+          });
+          return {
+            address: provider.address,
+            gpuType: onChainProvider.gpuType,
+            vramGB: onChainProvider.vramGB,
+            pricePerSecond: onChainProvider.pricePerSecond,
+            pricePerSecondMOVE: onChainProvider.pricePerSecond / 100000000,
+            isActive: onChainProvider.isActive,
+            reputationScore: onChainProvider.reputationScore,
+            registeredAt: provider.registeredAt,
+          };
+        } catch (error: any) {
+          // Provider might not exist on-chain anymore, remove from registry
+          if (error.message.includes("not found")) {
+            providerRegistry.removeProvider(provider.address);
+            return null;
+          }
+          // Return cached data if we can't fetch
+          return {
+            ...provider,
+            pricePerSecondMOVE: provider.pricePerSecond / 100000000,
+          };
+        }
+      })
+    );
+
+    const validProviders = syncedProviders.filter(p => p !== null);
+
+    res.json({
+      success: true,
+      count: validProviders.length,
+      activeOnly,
+      providers: validProviders,
+    });
+  } catch (error: any) {
+    console.error("List providers error:", error);
+    res.status(500).json({
+      error: error.message || "Failed to list providers",
     });
   }
 });
@@ -64,7 +222,7 @@ router.post("/register", async (req, res) => {
  * GET /api/v1/providers/:address
  * Get provider information
  */
-router.get("/:address", async (req, res) => {
+router.get("/:address", generalLimiter, async (req, res) => {
   try {
     const { address } = req.params;
 
@@ -94,7 +252,7 @@ router.get("/:address", async (req, res) => {
  * GET /api/v1/providers/:address/active
  * Check if provider is active
  */
-router.get("/:address/active", async (req, res) => {
+router.get("/:address/active", generalLimiter, async (req, res) => {
   try {
     const { address } = req.params;
     const isActive = await providerService.isProviderActive(address);
@@ -114,7 +272,7 @@ router.get("/:address/active", async (req, res) => {
  * GET /api/v1/providers/:address/price
  * Get provider's price per second
  */
-router.get("/:address/price", async (req, res) => {
+router.get("/:address/price", generalLimiter, async (req, res) => {
   try {
     const { address } = req.params;
     const pricePerSecond = await providerService.getProviderPrice(address);
@@ -143,7 +301,7 @@ router.get("/:address/price", async (req, res) => {
  *   "isActive": true
  * }
  */
-router.patch("/:address/availability", async (req, res) => {
+router.patch("/:address/availability", strictLimiter, async (req, res) => {
   try {
     const { address } = req.params;
     const { privateKey, isActive } = req.body;
@@ -162,6 +320,9 @@ router.patch("/:address/availability", async (req, res) => {
     }
 
     const txnHash = await providerService.updateAvailability(account, isActive);
+
+    // Update registry
+    providerRegistry.updateProvider(address, { isActive });
 
     res.json({
       success: true,
@@ -185,7 +346,7 @@ router.patch("/:address/availability", async (req, res) => {
  *   "pricePerSecond": 2000000
  * }
  */
-router.patch("/:address/pricing", async (req, res) => {
+router.patch("/:address/pricing", strictLimiter, async (req, res) => {
   try {
     const { address } = req.params;
     const { privateKey, pricePerSecond } = req.body;
@@ -208,6 +369,9 @@ router.patch("/:address/pricing", async (req, res) => {
       Number(pricePerSecond)
     );
 
+    // Update registry
+    providerRegistry.updateProvider(address, { pricePerSecond: Number(pricePerSecond) });
+
     res.json({
       success: true,
       transactionHash: txnHash,
@@ -218,18 +382,6 @@ router.patch("/:address/pricing", async (req, res) => {
     console.error("Update pricing error:", error);
     res.status(500).json({ error: error.message || "Failed to update pricing" });
   }
-});
-
-/**
- * GET /api/v1/providers/min-stake
- * Get minimum stake amount required for registration
- */
-router.get("/min-stake", (_req, res) => {
-  res.json({
-    success: true,
-    minStakeAmount: providerService.getMinStakeAmount(),
-    minStakeAmountMOVE: providerService.getMinStakeAmount() / 100000000, // Convert to MOVE
-  });
 });
 
 export default router;

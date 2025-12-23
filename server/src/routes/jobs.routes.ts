@@ -2,6 +2,11 @@
 import express from "express";
 import { JobService, JobStatus } from "../services/job.service.js";
 import { BlockchainService } from "../services/blockchain.service.js";
+import { 
+  strictLimiter, 
+  discoveryLimiter,
+  generalLimiter 
+} from "../middleware/rate-limiter.middleware.js";
 
 const router = express.Router();
 
@@ -22,7 +27,7 @@ const jobService = new JobService(blockchainService);
  *   "maxDuration": 3600
  * }
  */
-router.post("/create", async (req, res) => {
+router.post("/create", strictLimiter, async (req, res) => {
   try {
     const { privateKey, providerAddress, dockerImage, escrowAmount, maxDuration } = req.body;
 
@@ -38,7 +43,7 @@ router.post("/create", async (req, res) => {
     const buyer = blockchainService.createAccountFromPrivateKey(privateKey);
 
     // Create job
-    const txnHash = await jobService.createJob(buyer, {
+    const { hash: txnHash, jobId } = await jobService.createJob(buyer, {
       providerAddress,
       dockerImage,
       escrowAmount: Number(escrowAmount),
@@ -49,6 +54,7 @@ router.post("/create", async (req, res) => {
       success: true,
       transactionHash: txnHash,
       buyerAddress: buyer.accountAddress.toString(),
+      jobId,
       message: "Job created successfully",
     });
   } catch (error: any) {
@@ -63,7 +69,7 @@ router.post("/create", async (req, res) => {
  * GET /api/v1/jobs/:buyerAddress/:jobId
  * Get job information
  */
-router.get("/:buyerAddress/:jobId", async (req, res) => {
+router.get("/:buyerAddress/:jobId", generalLimiter, async (req, res) => {
   try {
     const { buyerAddress, jobId } = req.params;
 
@@ -93,7 +99,7 @@ router.get("/:buyerAddress/:jobId", async (req, res) => {
  * GET /api/v1/jobs/:buyerAddress/:jobId/status
  * Get job status
  */
-router.get("/:buyerAddress/:jobId/status", async (req, res) => {
+router.get("/:buyerAddress/:jobId/status", generalLimiter, async (req, res) => {
   try {
     const { buyerAddress, jobId } = req.params;
     const status = await jobService.getJobStatus(buyerAddress, Number(jobId));
@@ -123,7 +129,7 @@ router.get("/:buyerAddress/:jobId/status", async (req, res) => {
  *   "privateKey": "provider_private_key"
  * }
  */
-router.post("/:buyerAddress/:jobId/start", async (req, res) => {
+router.post("/:buyerAddress/:jobId/start", strictLimiter, async (req, res) => {
   try {
     const { buyerAddress, jobId } = req.params;
     const { privateKey } = req.body;
@@ -165,7 +171,7 @@ router.post("/:buyerAddress/:jobId/start", async (req, res) => {
  *   "outputUrl": "https://..."
  * }
  */
-router.post("/:buyerAddress/:jobId/complete", async (req, res) => {
+router.post("/:buyerAddress/:jobId/complete", strictLimiter, async (req, res) => {
   try {
     const { buyerAddress, jobId } = req.params;
     const { privateKey, outputUrl } = req.body;
@@ -211,7 +217,7 @@ router.post("/:buyerAddress/:jobId/complete", async (req, res) => {
  *   "privateKey": "private_key"
  * }
  */
-router.post("/:buyerAddress/:jobId/fail", async (req, res) => {
+router.post("/:buyerAddress/:jobId/fail", strictLimiter, async (req, res) => {
   try {
     const { buyerAddress, jobId } = req.params;
     const { privateKey } = req.body;
@@ -252,7 +258,7 @@ router.post("/:buyerAddress/:jobId/fail", async (req, res) => {
  *   "privateKey": "buyer_private_key"
  * }
  */
-router.post("/:buyerAddress/:jobId/cancel", async (req, res) => {
+router.post("/:buyerAddress/:jobId/cancel", strictLimiter, async (req, res) => {
   try {
     const { buyerAddress, jobId } = req.params;
     const { privateKey } = req.body;
@@ -286,7 +292,7 @@ router.post("/:buyerAddress/:jobId/cancel", async (req, res) => {
  * GET /api/v1/jobs/:buyerAddress/:jobId/duration
  * Get job duration
  */
-router.get("/:buyerAddress/:jobId/duration", async (req, res) => {
+router.get("/:buyerAddress/:jobId/duration", generalLimiter, async (req, res) => {
   try {
     const { buyerAddress, jobId } = req.params;
     const duration = await jobService.getJobDuration(buyerAddress, Number(jobId));
@@ -311,7 +317,7 @@ router.get("/:buyerAddress/:jobId/duration", async (req, res) => {
  * GET /api/v1/jobs/:buyerAddress/:jobId/output
  * Get job output URL
  */
-router.get("/:buyerAddress/:jobId/output", async (req, res) => {
+router.get("/:buyerAddress/:jobId/output", generalLimiter, async (req, res) => {
   try {
     const { buyerAddress, jobId } = req.params;
     const outputUrl = await jobService.getJobOutputUrl(buyerAddress, Number(jobId));

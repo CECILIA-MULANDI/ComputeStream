@@ -51,13 +51,41 @@ export class ProviderService {
       throw new Error("Price per second must be greater than 0");
     }
 
+    // Check account balance (at least need gas fees, typically ~1000-10000 octas)
+    // Note: The contract doesn't actually transfer stake_amount, it just stores it
+    // So we only need enough for gas fees
+    try {
+      const balance = await this.blockchain.getAccountBalance(account.accountAddress.toString());
+      const minBalanceForGas = BigInt(10000); // ~0.0001 MOVE for gas
+      if (balance < minBalanceForGas) {
+        throw new Error(
+          `Insufficient balance for transaction. Account has ${balance} octas, need at least ${minBalanceForGas} octas for gas fees. ` +
+          `Please fund your account: ${account.accountAddress.toString()}`
+        );
+      }
+    } catch (error: any) {
+      // If balance check fails, log but don't block registration
+      // The transaction will fail later if balance is truly insufficient
+      console.warn("Could not check account balance:", error.message);
+    }
+
     // Build transaction arguments
+    // Use strings for u64 to avoid JavaScript number precision issues with large values
+    // The Aptos SDK expects u64 values as strings or numbers, strings are safest for large values
     const args = [
-      params.gpuType,
-      params.vramGB.toString(),
-      params.pricePerSecond.toString(),
-      params.stakeAmount.toString(),
+      params.gpuType,                    // String
+      String(params.vramGB),             // u64 (as string to avoid precision loss)
+      String(params.pricePerSecond),     // u64 (as string)
+      String(params.stakeAmount),        // u64 (as string)
     ];
+
+    console.log("Registering provider with args:", {
+      address: account.accountAddress.toString(),
+      gpuType: params.gpuType,
+      vramGB: params.vramGB,
+      pricePerSecond: params.pricePerSecond,
+      stakeAmount: params.stakeAmount,
+    });
 
     // Execute transaction
     const result = await this.blockchain.executeTransaction(
@@ -108,7 +136,7 @@ export class ProviderService {
       throw new Error("Price per second must be greater than 0");
     }
 
-    const args = [newPricePerSecond.toString()];
+    const args = [String(newPricePerSecond)];
 
     const result = await this.blockchain.executeTransaction(
       account,

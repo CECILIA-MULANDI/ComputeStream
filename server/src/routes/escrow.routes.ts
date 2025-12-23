@@ -2,6 +2,10 @@
 import express from "express";
 import { EscrowService } from "../services/escrow.service.js";
 import { BlockchainService } from "../services/blockchain.service.js";
+import { 
+  strictLimiter, 
+  generalLimiter 
+} from "../middleware/rate-limiter.middleware.js";
 
 const router = express.Router();
 
@@ -21,7 +25,7 @@ const escrowService = new EscrowService(blockchainService);
  *   "amount": 1000000000
  * }
  */
-router.post("/deposit", async (req, res) => {
+router.post("/deposit", strictLimiter, async (req, res) => {
   try {
     const { privateKey, jobId, providerAddress, amount } = req.body;
 
@@ -63,7 +67,7 @@ router.post("/deposit", async (req, res) => {
  * GET /api/v1/escrow/:buyerAddress/:jobId
  * Get escrow information
  */
-router.get("/:buyerAddress/:jobId", async (req, res) => {
+router.get("/:buyerAddress/:jobId", generalLimiter, async (req, res) => {
   try {
     const { buyerAddress, jobId } = req.params;
 
@@ -93,7 +97,7 @@ router.get("/:buyerAddress/:jobId", async (req, res) => {
  * GET /api/v1/escrow/:buyerAddress/:jobId/balance
  * Get remaining balance in escrow
  */
-router.get("/:buyerAddress/:jobId/balance", async (req, res) => {
+router.get("/:buyerAddress/:jobId/balance", generalLimiter, async (req, res) => {
   try {
     const { buyerAddress, jobId } = req.params;
     const balance = await escrowService.getRemainingBalance(buyerAddress, Number(jobId));
@@ -118,7 +122,7 @@ router.get("/:buyerAddress/:jobId/balance", async (req, res) => {
  * GET /api/v1/escrow/:buyerAddress/:jobId/released
  * Get released amount from escrow
  */
-router.get("/:buyerAddress/:jobId/released", async (req, res) => {
+router.get("/:buyerAddress/:jobId/released", generalLimiter, async (req, res) => {
   try {
     const { buyerAddress, jobId } = req.params;
     const released = await escrowService.getReleasedAmount(buyerAddress, Number(jobId));
@@ -143,7 +147,7 @@ router.get("/:buyerAddress/:jobId/released", async (req, res) => {
  * GET /api/v1/escrow/:buyerAddress/:jobId/active
  * Check if escrow is active
  */
-router.get("/:buyerAddress/:jobId/active", async (req, res) => {
+router.get("/:buyerAddress/:jobId/active", generalLimiter, async (req, res) => {
   try {
     const { buyerAddress, jobId } = req.params;
     const isActive = await escrowService.isEscrowActive(buyerAddress, Number(jobId));
@@ -170,7 +174,7 @@ router.get("/:buyerAddress/:jobId/active", async (req, res) => {
  *   "amount": 1000000
  * }
  */
-router.post("/:buyerAddress/:jobId/release", async (req, res) => {
+router.post("/:buyerAddress/:jobId/release", strictLimiter, async (req, res) => {
   try {
     const { buyerAddress, jobId } = req.params;
     const { privateKey, amount } = req.body;
@@ -216,7 +220,7 @@ router.post("/:buyerAddress/:jobId/release", async (req, res) => {
  *   "privateKey": "hex_private_key"
  * }
  */
-router.post("/:buyerAddress/:jobId/refund", async (req, res) => {
+router.post("/:buyerAddress/:jobId/refund", strictLimiter, async (req, res) => {
   try {
     const { buyerAddress, jobId } = req.params;
     const { privateKey } = req.body;
@@ -254,7 +258,7 @@ router.post("/:buyerAddress/:jobId/refund", async (req, res) => {
  *   "privateKey": "hex_private_key"
  * }
  */
-router.post("/:buyerAddress/:jobId/close", async (req, res) => {
+router.post("/:buyerAddress/:jobId/close", strictLimiter, async (req, res) => {
   try {
     const { buyerAddress, jobId } = req.params;
     const { privateKey } = req.body;

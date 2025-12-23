@@ -5,7 +5,9 @@
   "scripts": {
     "dev": "tsx watch src/index.ts",
     "start": "node dist/index.js",
-    "build": "tsc"
+    "build": "tsc",
+    "test:payment-flow": "tsx test-payment-flow.ts",
+    "test:x402-client": "tsx test-x402-client.ts"
   },
   "dependencies": {
     "@aptos-labs/ts-sdk": "^5.2.0",
@@ -18,6 +20,8 @@
     "dotenv": "^16.6.1",
     "ethers": "^6.16.0",
     "express": "^4.22.1",
+    "express-rate-limit": "^8.2.1",
+    "got": "^11.8.6",
     "react": "^19.2.3",
     "vite": "^7.3.0",
     "x402plus": "latest"
