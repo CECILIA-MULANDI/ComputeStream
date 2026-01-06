@@ -17,7 +17,6 @@ export function JobCreate() {
     providerAddress: searchParams.get('provider') || '',
     dockerImage: '',
     duration: '3600',
-    privateKey: '',
   });
 
   // Check wallet connection on mount
@@ -74,7 +73,6 @@ export function JobCreate() {
         providerAddress: formData.providerAddress,
         dockerImage: formData.dockerImage,
         duration: Number(formData.duration),
-        privateKey: formData.privateKey || undefined,
       });
 
       if (result.job && result.job.jobId) {
@@ -206,23 +204,6 @@ export function JobCreate() {
               />
               <p className="mt-1 text-xs text-gray-500">
                 Estimated cost: {estimatedCost.toFixed(8)} MOVE
-              </p>
-            </div>
-
-            <div>
-              <label htmlFor="privateKey" className="block text-sm font-medium text-gray-700">
-                Private Key (Hex) - Optional
-              </label>
-              <input
-                type="text"
-                id="privateKey"
-                value={formData.privateKey}
-                onChange={(e) => setFormData({ ...formData, privateKey: e.target.value })}
-                className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 sm:text-sm"
-                placeholder="0x... (leave empty for access-only)"
-              />
-              <p className="mt-1 text-xs text-gray-500">
-                If provided, job will be created automatically. Otherwise, access is granted and you can create the job manually.
               </p>
             </div>
 

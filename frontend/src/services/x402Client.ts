@@ -181,13 +181,12 @@ export async function x402Request(
  */
 export const x402ComputeApi = {
   /**
-   * Execute compute job with automatic x402 payment
+   * Execute compute job with automatic x402 payment (via wallet)
    */
   execute: async (data: {
     providerAddress: string;
     dockerImage: string;
     duration: number;
-    privateKey?: string;
   }) => {
     return await x402Request('/api/v1/compute/execute', {
       method: 'POST',

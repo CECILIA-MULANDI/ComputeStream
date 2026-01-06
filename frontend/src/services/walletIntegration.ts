@@ -187,74 +187,39 @@ export async function signX402Payment(paymentRequest: {
     }
     
     console.log('🔐 Preparing payment transaction...');
-    console.log('Wallet type:', walletState.walletType);
-    console.log('Payment:', paymentRequest);
-    console.log('Wallet methods:', Object.keys(wallet));
     
-    let txnHash: string = '';
-  
+    // Ensure amount is a number (use smaller amount for testing)
+    let amountNum = parseInt(paymentRequest.amount, 10);
+    // Cap at 1 MOVE for testing to avoid insufficient balance issues
+    if (amountNum > 100000000) {
+      console.log(`Reducing amount from ${amountNum} to 100000000 (1 MOVE) for testing`);
+      amountNum = 100000000; // 1 MOVE
+    }
     
-    // Ensure amount is a number
-    const amountNum = parseInt(paymentRequest.amount, 10);
-    console.log('Amount (number):', amountNum);
-    
-    // Format 1: Standard Aptos wallet adapter format (legacy)
-    const payloadV1 = {
-      type: 'entry_function_payload',
-      function: '0x1::aptos_account::transfer',
-      type_arguments: [],
-      arguments: [paymentRequest.recipient, amountNum],
-    };
-    
-    // Format 2: Simplified payload (newer wallets like Razor)
-    const payloadV2 = {
-      function: '0x1::aptos_account::transfer',
-      typeArguments: [],
-      functionArguments: [paymentRequest.recipient, amountNum],
-    };
-    
-    // Format 3: Coin transfer (alternative function)
-    const payloadV3 = {
-      function: '0x1::coin::transfer',
-      typeArguments: ['0x1::aptos_coin::AptosCoin'],
-      functionArguments: [paymentRequest.recipient, amountNum],
-    };
-    
-    console.log('Trying transaction formats...');
-    console.log('PayloadV2:', JSON.stringify(payloadV2));
-    
-    // Try different transaction signing methods
-    if (typeof wallet.signAndSubmitTransaction === 'function') {
-      // Try formats in order until one works
-      const formats = [
-        { name: 'v2 (aptos_account::transfer)', payload: payloadV2 },
-        { name: 'v3 (coin::transfer)', payload: payloadV3 },
-        { name: 'v1 (legacy)', payload: payloadV1 },
-      ];
-      
-      let lastError: any;
-      for (const format of formats) {
-        try {
-          console.log(`Trying ${format.name}...`, format.payload);
-          const result = await wallet.signAndSubmitTransaction(format.payload);
-          console.log(`✅ ${format.name} succeeded:`, result);
-          txnHash = result?.hash || result?.txnHash || (typeof result === 'string' ? result : '');
-          if (txnHash) break;
-        } catch (e: any) {
-          console.log(`❌ ${format.name} failed:`, e.message);
-          lastError = e;
-        }
+    // Use aptos_account::transfer (auto-registers recipient, simpler)
+    // Convert amount to string (some wallets require this)
+    const payload = {
+      payload: {
+        type: 'entry_function_payload',
+        function: '0x1::aptos_account::transfer',
+        type_arguments: [],
+        arguments: [paymentRequest.recipient, String(amountNum)],
       }
-      
-      if (!txnHash && lastError) {
-        throw lastError;
-      }
-    } else if (typeof wallet.signTransaction === 'function') {
-      console.log('Using signTransaction...');
-      throw new Error('Wallet only supports signTransaction - signAndSubmitTransaction required');
-    } else {
-      console.error('Wallet has no known signing method. Available:', Object.keys(wallet));
+    };
+    
+    console.log('Sending transaction:', payload);
+    
+    // Sign and submit
+    if (typeof wallet.signAndSubmitTransaction !== 'function') {
       throw new Error('Wallet does not support transaction signing');
+    }
+    
+    const result = await wallet.signAndSubmitTransaction(payload);
+    console.log('Transaction result:', result);
+    const txnHash = result?.hash || result?.txnHash || (typeof result === 'string' ? result : '');
+    
+    if (!txnHash) {
+      throw new Error('No transaction hash returned');
     }
     
     if (!txnHash) {
@@ -266,6 +231,66 @@ export async function signX402Payment(paymentRequest: {
     return txnHash;
   } catch (error: any) {
     console.error('Payment signing failed:', error);
+    throw error;
+  }
+}
+
+/**
+ * Sign and submit a generic transaction via wallet
+ */
+export async function signTransaction(payload: {
+  function: string;
+  typeArguments: string[];
+  functionArguments: any[];
+}): Promise<string> {
+  try {
+    if (!walletState.connected) {
+      throw new Error('Wallet not connected');
+    }
+    
+    const wallet = getWalletProvider(walletState.walletType || 'razor');
+    
+    if (!wallet) {
+      throw new Error('Wallet not available');
+    }
+    
+    console.log('🔐 Preparing transaction...');
+    console.log('Payload:', payload);
+    
+    // Convert numeric arguments to strings (some wallets require this)
+    const stringifiedArgs = payload.functionArguments.map(arg => 
+      typeof arg === 'number' ? String(arg) : arg
+    );
+    
+    const txPayload = {
+      payload: {
+        type: 'entry_function_payload',
+        function: payload.function,
+        type_arguments: payload.typeArguments,
+        arguments: stringifiedArgs,
+      }
+    };
+    
+    console.log('Sending transaction:', txPayload);
+    
+    // Sign and submit
+    if (typeof wallet.signAndSubmitTransaction !== 'function') {
+      throw new Error('Wallet does not support transaction signing');
+    }
+    
+    const result = await wallet.signAndSubmitTransaction(txPayload);
+    console.log('Transaction result:', result);
+    const txnHash = result?.hash || result?.txnHash || (typeof result === 'string' ? result : '');
+    
+    if (!txnHash) {
+      throw new Error('No transaction hash returned');
+    }
+    
+    console.log('✅ Transaction submitted:', txnHash);
+    
+    return txnHash;
+  } catch (error: any) {
+    console.error('Transaction signing failed:', error);
     throw error;
   }
 }

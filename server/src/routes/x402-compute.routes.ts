@@ -1,5 +1,3 @@
-
-
 import express from "express";
 import { ProviderService } from "../services/provider.service.js";
 import { JobService } from "../services/job.service.js";
@@ -8,7 +6,7 @@ import { PaymentStreamService } from "../services/payment-stream.service.js";
 import { PaymentOrchestratorService } from "../services/payment-orchestrator.service.js";
 import { X402IntegrationService } from "../services/x402-integration.service.js";
 import { BlockchainService } from "../services/blockchain.service.js";
-import { providerRegistry } from "../services/provider-registry.service.js";
+import { providerRepository } from "../../database/repositories/provider.repository.js";
 import { 
   strictLimiter, 
   veryStrictLimiter, 
@@ -251,49 +249,24 @@ router.get("/providers", discoveryLimiter, async (req, res) => {
   try {
     const activeOnly = req.query.activeOnly !== "false"; // Default to true
     
-    // Get providers from registry
-    const providers = activeOnly 
-      ? providerRegistry.getActiveProviders()
-      : providerRegistry.getAllProviders();
+    // Get providers from database
+    const dbProviders = await providerRepository.findAll(activeOnly);
 
-    // Sync with on-chain data
-    const syncedProviders = await Promise.all(
-      providers.map(async (provider) => {
-        try {
-          const onChainProvider = await providerService.getProvider(provider.address);
-          providerRegistry.updateProvider(provider.address, {
-            isActive: onChainProvider.isActive,
-            pricePerSecond: onChainProvider.pricePerSecond,
-          });
-          return {
-            address: provider.address,
-            gpuType: onChainProvider.gpuType,
-            vramGB: onChainProvider.vramGB,
-            pricePerSecond: onChainProvider.pricePerSecond,
-            pricePerSecondMOVE: onChainProvider.pricePerSecond / 100000000,
-            isActive: onChainProvider.isActive,
-            reputationScore: onChainProvider.reputationScore,
-          };
-        } catch (error: any) {
-          if (error.message.includes("not found")) {
-            providerRegistry.removeProvider(provider.address);
-            return null;
-          }
-          return {
-            ...provider,
-            pricePerSecondMOVE: provider.pricePerSecond / 100000000,
-          };
-        }
-      })
-    );
-
-    const validProviders = syncedProviders.filter(p => p !== null);
+    const providers = dbProviders.map(p => ({
+      address: p.address,
+      gpuType: p.gpu_type,
+      vramGB: p.vram_gb,
+      pricePerSecond: Number(p.price_per_second),
+      pricePerSecondMOVE: Number(p.price_per_second) / 100000000,
+      isActive: p.is_active,
+      reputationScore: p.reputation_score,
+    }));
 
     res.json({
       success: true,
       message: "Browse available GPU providers",
-      count: validProviders.length,
-      providers: validProviders,
+      count: providers.length,
+      providers,
       note: "Use /api/v1/compute/access/:providerAddress with x402 payment to access compute",
       x402Integration: {
         enabled: true,

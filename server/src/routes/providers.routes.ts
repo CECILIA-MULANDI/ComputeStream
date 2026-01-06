@@ -1,8 +1,6 @@
-
 import express from "express";
 import { ProviderService } from "../services/provider.service.js";
 import { BlockchainService } from "../services/blockchain.service.js";
-import { providerRegistry } from "../services/provider-registry.service.js";
 import { providerRepository } from "../../database/repositories/provider.repository.js";
 import { 
   strictLimiter, 
@@ -18,17 +16,65 @@ const blockchainService = new BlockchainService();
 const providerService = new ProviderService(blockchainService);
 
 /**
- * POST /api/v1/providers/register
- * Register a new provider or update existing provider
+ * POST /api/v1/providers/sync
+ * Sync a provider registration to the database after wallet-based registration
+ * Called by frontend after successful on-chain registration via wallet
  * 
  * Body:
  * {
- *   "privateKey": "hex_private_key",  // In production, use wallet signature
+ *   "address": "0x...",           // Provider wallet address
+ *   "txHash": "0x...",            // Transaction hash from wallet
  *   "gpuType": "RTX 4090",
  *   "vramGB": 24,
- *   "pricePerSecond": 1000000,  // In Octas
- *   "stakeAmount": 100000000    // In Octas (min 0.1 MOVE)
+ *   "pricePerSecond": 1000000,    // In Octas
+ *   "stakeAmount": 100000000      // In Octas
  * }
+ */
+router.post("/sync", strictLimiter, async (req, res) => {
+  try {
+    const { address, txHash, gpuType, vramGB, pricePerSecond, stakeAmount } = req.body;
+
+    // Validate required fields
+    if (!address || !gpuType || vramGB === undefined || !pricePerSecond || !stakeAmount) {
+      return res.status(400).json({
+        error: "Missing required fields",
+        required: ["address", "gpuType", "vramGB", "pricePerSecond", "stakeAmount"],
+      });
+    }
+
+    // Save to database
+    await providerRepository.upsert({
+      address,
+      gpu_type: gpuType,
+      vram_gb: Number(vramGB),
+      price_per_second: BigInt(pricePerSecond),
+      stake_amount: BigInt(stakeAmount),
+      reputation_score: 100,
+      is_active: true,
+      total_jobs_completed: 0,
+      total_earnings: 0n,
+    });
+    
+    console.log(`✅ Provider ${address} synced to database (tx: ${txHash || 'N/A'})`);
+
+    res.json({
+      success: true,
+      address,
+      txHash,
+      message: "Provider synced to database successfully",
+    });
+  } catch (error: any) {
+    console.error("Provider sync error:", error);
+    res.status(500).json({
+      error: error.message || "Failed to sync provider",
+    });
+  }
+});
+
+/**
+ * @deprecated Use wallet signing + /sync endpoint instead
+ * POST /api/v1/providers/register
+ * Legacy endpoint - registers provider using private key (server-side)
  */
 router.post("/register", veryStrictLimiter, async (req, res) => {
   try {
@@ -37,16 +83,15 @@ router.post("/register", veryStrictLimiter, async (req, res) => {
     // Validate required fields
     if (!privateKey || !gpuType || vramGB === undefined || !pricePerSecond || !stakeAmount) {
       return res.status(400).json({
-        error: "Missing required fields",
+        error: "Missing required fields. Note: For wallet-based registration, use /sync endpoint instead.",
         required: ["privateKey", "gpuType", "vramGB", "pricePerSecond", "stakeAmount"],
       });
     }
 
     // Create account from private key
-    // NOTE: In production, you'd verify a wallet signature instead of using private keys
     const account = blockchainService.createAccountFromPrivateKey(privateKey);
 
-    // Register provider
+    // Register provider on-chain
     const txnHash = await providerService.registerProvider(account, {
       gpuType,
       vramGB: Number(vramGB),
@@ -56,34 +101,19 @@ router.post("/register", veryStrictLimiter, async (req, res) => {
 
     const providerAddress = account.accountAddress.toString();
 
-    // Register in database
-    try {
-      await providerRepository.upsert({
-        address: providerAddress,
-        gpu_type: gpuType,
-        vram_gb: Number(vramGB),
-        price_per_second: BigInt(pricePerSecond),
-        stake_amount: BigInt(stakeAmount),
-        reputation_score: 100, // Default reputation
-        is_active: true,
-        total_jobs_completed: 0,
-        total_earnings: 0n,
-      });
-      console.log(`✅ Provider ${providerAddress} saved to database`);
-    } catch (dbError: any) {
-      console.warn("Could not save provider to database:", dbError.message);
-      // Continue - provider is still registered on-chain
-    }
-
-    // Also register in local registry for backward compatibility
-    providerRegistry.registerProvider({
+    // Save to database
+    await providerRepository.upsert({
       address: providerAddress,
-      gpuType,
-      vramGB: Number(vramGB),
-      pricePerSecond: Number(pricePerSecond),
-      isActive: true,
-      reputationScore: 100,
+      gpu_type: gpuType,
+      vram_gb: Number(vramGB),
+      price_per_second: BigInt(pricePerSecond),
+      stake_amount: BigInt(stakeAmount),
+      reputation_score: 100,
+      is_active: true,
+      total_jobs_completed: 0,
+      total_earnings: 0n,
     });
+    console.log(`✅ Provider ${providerAddress} saved to database`);
 
     res.json({
       success: true,
@@ -93,34 +123,13 @@ router.post("/register", veryStrictLimiter, async (req, res) => {
     });
   } catch (error: any) {
     console.error("Provider registration error:", error);
-    console.error("Error stack:", error.stack);
-    console.error("Error details:", {
-      message: error.message,
-      response: error.response,
-      data: error.data,
-      cause: error.cause,
-    });
     
     const statusCode = error.response?.status || error.statusCode || 500;
     const errorMessage = error.message || "Failed to register provider";
     
-    // Extract nested error messages if they exist
-    let details = error.response?.data || error.data || error.stack;
-    if (error.message && error.message.includes("Transaction execution failed")) {
-      // If it's a transaction error, include the full error message
-      details = error.message;
-    }
-    
-    // If it's an RPC timeout, provide helpful guidance
-    const isRpcTimeout = errorMessage.includes('RPC connection timeout') || errorMessage.includes('ETIMEDOUT');
-    
     res.status(statusCode).json({
       error: errorMessage,
-      details: typeof details === 'string' ? details : JSON.stringify(details),
-      ...(isRpcTimeout && {
-        suggestion: 'The Movement Network RPC endpoint may be temporarily unavailable. Please try again in a few minutes, or check if there is an alternative RPC endpoint available.',
-        rpcEndpoint: process.env.MOVEMENT_RPC_URL,
-      }),
+      suggestion: "Consider using wallet signing + /sync endpoint for a more secure registration flow.",
     });
   }
 });
@@ -179,49 +188,27 @@ router.get("/", discoveryLimiter, async (req, res) => {
   try {
     const activeOnly = req.query.activeOnly === "true";
     
-    // Try to get providers from database first
+    // Get providers from database
     const dbProviders = await providerRepository.findAll(activeOnly);
     
-    if (dbProviders.length > 0) {
-      // Return database providers
-      const formattedProviders = dbProviders.map(p => ({
-        address: p.address,
-        gpuType: p.gpu_type,
-        vramGB: p.vram_gb,
-        pricePerSecond: Number(p.price_per_second),
-        pricePerSecondMOVE: Number(p.price_per_second) / 100000000,
-        isActive: p.is_active,
-        reputationScore: p.reputation_score,
-        totalJobsCompleted: p.total_jobs_completed,
-        totalEarnings: p.total_earnings.toString(),
-        registeredAt: p.created_at,
-        lastSeenAt: p.last_seen_at,
-      }));
-
-      return res.json({
-        success: true,
-        count: formattedProviders.length,
-        activeOnly,
-        source: "database",
-        providers: formattedProviders,
-      });
-    }
-
-    // Fallback to in-memory registry if database is empty
-    const providers = activeOnly 
-      ? providerRegistry.getActiveProviders()
-      : providerRegistry.getAllProviders();
-
-    const formattedProviders = providers.map(p => ({
-      ...p,
-      pricePerSecondMOVE: p.pricePerSecond / 100000000,
+    const formattedProviders = dbProviders.map(p => ({
+      address: p.address,
+      gpuType: p.gpu_type,
+      vramGB: p.vram_gb,
+      pricePerSecond: Number(p.price_per_second),
+      pricePerSecondMOVE: Number(p.price_per_second) / 100000000,
+      isActive: p.is_active,
+      reputationScore: p.reputation_score,
+      totalJobsCompleted: p.total_jobs_completed,
+      totalEarnings: p.total_earnings?.toString() || "0",
+      registeredAt: p.created_at,
+      lastSeenAt: p.last_seen_at,
     }));
 
     res.json({
       success: true,
       count: formattedProviders.length,
       activeOnly,
-      source: "in-memory",
       providers: formattedProviders,
     });
   } catch (error: any) {
@@ -336,14 +323,7 @@ router.patch("/:address/availability", strictLimiter, async (req, res) => {
     const txnHash = await providerService.updateAvailability(account, isActive);
 
     // Update database
-    try {
-      await providerRepository.updateAvailability(address, isActive);
-    } catch (dbError: any) {
-      console.warn("Could not update provider in database:", dbError.message);
-    }
-
-    // Update registry
-    providerRegistry.updateProvider(address, { isActive });
+    await providerRepository.updateAvailability(address, isActive);
 
     res.json({
       success: true,
@@ -391,14 +371,7 @@ router.patch("/:address/pricing", strictLimiter, async (req, res) => {
     );
 
     // Update database
-    try {
-      await providerRepository.updatePricing(address, BigInt(pricePerSecond));
-    } catch (dbError: any) {
-      console.warn("Could not update provider pricing in database:", dbError.message);
-    }
-
-    // Update registry
-    providerRegistry.updateProvider(address, { pricePerSecond: Number(pricePerSecond) });
+    await providerRepository.updatePricing(address, BigInt(pricePerSecond));
 
     res.json({
       success: true,

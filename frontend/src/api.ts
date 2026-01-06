@@ -24,8 +24,9 @@ export const providerApi = {
     return response.data.provider;
   },
 
+  // Note: Provider registration is now done client-side via wallet signing
+  // This is kept for backwards compatibility but not used
   register: async (data: {
-    privateKey: string;
     gpuType: string;
     vramGB: number;
     pricePerSecond: number;
@@ -35,8 +36,8 @@ export const providerApi = {
     return response.data;
   },
 
+  // Note: Availability updates now done via wallet
   updateAvailability: async (address: string, data: {
-    privateKey: string;
     isActive: boolean;
   }) => {
     const response = await api.patch(`/providers/${address}/availability`, data);
@@ -122,9 +123,8 @@ export const computeApi = {
     providerAddress: string;
     dockerImage: string;
     duration: number;
-    privateKey?: string;
   }) => {
-    // Use x402 payment-enabled client
+    // Use x402 payment-enabled client (payment via wallet)
     return await x402ComputeApi.execute(data);
   },
 };

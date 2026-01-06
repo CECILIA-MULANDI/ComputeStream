@@ -1,9 +1,8 @@
 /**
- * Provider Registry Service
+ * @deprecated This in-memory registry is no longer used.
+ * Use providerRepository from database/repositories/provider.repository.ts instead.
  * 
- * Tracks all registered providers for discovery.
- * In a production system, this would be backed by a database or indexed from blockchain events.
- * For MVP, we maintain an in-memory registry.
+ * All provider data is now stored in PostgreSQL and synced via the blockchain indexer.
  */
 
 export interface RegisteredProvider {

@@ -1,14 +1,16 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { useWallet } from '@aptos-labs/wallet-adapter-react';
+import { InputTransactionData } from "@aptos-labs/wallet-adapter-core";
 import { providerApi } from '../api';
 
 export function ProviderRegister() {
   const navigate = useNavigate();
+  const { signAndSubmitTransaction, account, connected, connect, disconnect, wallet } = useWallet();
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [minStake, setMinStake] = useState<number | null>(null);
   const [formData, setFormData] = useState({
-    privateKey: '',
     gpuType: '',
     vramGB: '',
     pricePerSecond: '',
@@ -34,44 +36,80 @@ export function ProviderRegister() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    
+    if (!connected || !account) {
+      setError('Please connect your wallet first');
+      return;
+    }
+    
     setLoading(true);
     setError(null);
 
     try {
-      const result = await providerApi.register({
-        privateKey: formData.privateKey,
+      const priceInOctas = Math.floor(Number(formData.pricePerSecond) * 100000000);
+      const stakeInOctas = Math.floor(Number(formData.stakeAmount) * 100000000);
+      
+      // Sign the registration transaction with wallet
+      const CONTRACT_ADDRESS = '0x69fa4604bbf4e835e978b4d7ef1cfe365f589291428a9d6332b6cd9f4e5e8ff1';
+      
+      console.log('Registering provider with:', {
         gpuType: formData.gpuType,
-        vramGB: Number(formData.vramGB),
-        pricePerSecond: Math.floor(Number(formData.pricePerSecond) * 100000000), // Convert to Octas
-        stakeAmount: Math.floor(Number(formData.stakeAmount) * 100000000), // Convert to Octas
+        vramGB: formData.vramGB,
+        priceInOctas,
+        stakeInOctas,
+        contract: CONTRACT_ADDRESS,
       });
+      
+      // Build transaction with correct structure for Aptos wallet adapter
+      const transaction: InputTransactionData = {
+        data: {
+          function: `${CONTRACT_ADDRESS}::provider_registry::register_provider`,
+          typeArguments: [],
+          functionArguments: [
+            formData.gpuType,
+            String(formData.vramGB),
+            String(priceInOctas),
+            String(stakeInOctas),
+          ]
+        }
+      };
+      
+      console.log('Transaction payload:', JSON.stringify(transaction, null, 2));
+      
+      // Submit transaction using wallet adapter
+      const response = await signAndSubmitTransaction(transaction);
+      console.log('✅ Transaction response:', response);
+      
+      const txHash = response?.hash || response?.txnHash || response;
 
-      alert(`Provider registered successfully! Address: ${result.providerAddress}`);
+      console.log('Registration tx:', txHash);
+      
+      // Sync to database
+      try {
+        await fetch('/api/v1/providers/sync', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            address: account.address,
+            txHash,
+            gpuType: formData.gpuType,
+            vramGB: Number(formData.vramGB),
+            pricePerSecond: priceInOctas,
+            stakeAmount: stakeInOctas,
+          }),
+        });
+        console.log('Provider synced to database');
+      } catch (syncErr) {
+        console.warn('Could not sync to database:', syncErr);
+        // Continue - registration succeeded on-chain
+      }
+
+      alert(`Provider registered successfully!\nAddress: ${account.address}\nTx: ${txHash}`);
       navigate('/providers');
     } catch (err: any) {
       console.error('Registration error:', err);
-      console.error('Error response:', err.response?.data);
-      
-      // Extract error message from response
-      const responseData = err.response?.data;
-      const errorMessage = responseData?.error || err.message || 'Registration failed';
-      const errorDetails = responseData?.details;
-      
-      // Format error message for display
-      let displayError = errorMessage;
-      if (errorDetails) {
-        // If details is a string, show it directly; otherwise stringify (but limit length)
-        const detailsStr = typeof errorDetails === 'string' 
-          ? errorDetails 
-          : JSON.stringify(errorDetails, null, 2);
-        // Limit details length to avoid UI issues
-        const truncatedDetails = detailsStr.length > 500 
-          ? detailsStr.substring(0, 500) + '...' 
-          : detailsStr;
-        displayError = `${errorMessage}\n\nDetails: ${truncatedDetails}`;
-      }
-      
-      setError(displayError);
+      const errorMessage = err.message || 'Registration failed';
+      setError(errorMessage);
     } finally {
       setLoading(false);
     }
@@ -85,6 +123,39 @@ export function ProviderRegister() {
           <p className="mt-1 text-sm text-gray-500">
             Register your GPU to start earning from compute jobs
           </p>
+        </div>
+
+        {/* Wallet Connection */}
+        <div className="bg-gray-800 shadow rounded-lg p-6 mb-6">
+          <h2 className="text-lg font-semibold text-white mb-4">💳 Connect Wallet</h2>
+          {!connected ? (
+            <div>
+              <button
+                onClick={() => connect("Razor Wallet")}
+                className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700"
+              >
+                Connect Wallet
+              </button>
+              <p className="mt-3 text-yellow-400 text-sm">
+                ⚠️ Connect your wallet to register as a provider (Razor, Petra, or other Aptos wallets)
+              </p>
+            </div>
+          ) : (
+            <div>
+              <p className="text-green-400 text-sm mb-2">
+                ✅ Connected: {wallet?.name || 'Wallet'}
+              </p>
+              <p className="text-gray-300 text-sm mb-3">
+                Address: {account?.address.slice(0, 10)}...{account?.address.slice(-6)}
+              </p>
+              <button
+                onClick={disconnect}
+                className="px-4 py-2 bg-red-600 text-white rounded-md hover:bg-red-700 text-sm"
+              >
+                Disconnect
+              </button>
+            </div>
+          )}
         </div>
 
         <div className="bg-white shadow rounded-lg">
@@ -114,24 +185,6 @@ export function ProviderRegister() {
                 </div>
               </div>
             )}
-
-            <div>
-              <label htmlFor="privateKey" className="block text-sm font-medium text-gray-700">
-                Private Key (Hex)
-              </label>
-              <input
-                type="text"
-                id="privateKey"
-                required
-                value={formData.privateKey}
-                onChange={(e) => setFormData({ ...formData, privateKey: e.target.value })}
-                className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 sm:text-sm"
-                placeholder="0x..."
-              />
-              <p className="mt-1 text-xs text-gray-500">
-                In production, use wallet signature instead of private keys
-              </p>
-            </div>
 
             <div>
               <label htmlFor="gpuType" className="block text-sm font-medium text-gray-700">
