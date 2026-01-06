@@ -3,6 +3,7 @@ import express from "express";
 import { ProviderService } from "../services/provider.service.js";
 import { BlockchainService } from "../services/blockchain.service.js";
 import { providerRegistry } from "../services/provider-registry.service.js";
+import { providerRepository } from "../../database/repositories/provider.repository.js";
 import { 
   strictLimiter, 
   veryStrictLimiter, 
@@ -55,22 +56,34 @@ router.post("/register", veryStrictLimiter, async (req, res) => {
 
     const providerAddress = account.accountAddress.toString();
 
-    // Register in local registry for discovery
+    // Register in database
     try {
-      const providerInfo = await providerService.getProvider(providerAddress);
-      providerRegistry.registerProvider({
+      await providerRepository.upsert({
         address: providerAddress,
-        gpuType: providerInfo.gpuType,
-        vramGB: providerInfo.vramGB,
-        pricePerSecond: providerInfo.pricePerSecond,
-        isActive: providerInfo.isActive,
-        reputationScore: providerInfo.reputationScore,
+        gpu_type: gpuType,
+        vram_gb: Number(vramGB),
+        price_per_second: BigInt(pricePerSecond),
+        stake_amount: BigInt(stakeAmount),
+        reputation_score: 100, // Default reputation
+        is_active: true,
+        total_jobs_completed: 0,
+        total_earnings: 0n,
       });
-    } catch (error) {
-      // If we can't fetch provider info immediately, that's ok
-      // It will be synced when they query the list
-      console.warn("Could not register provider in local registry:", error);
+      console.log(`✅ Provider ${providerAddress} saved to database`);
+    } catch (dbError: any) {
+      console.warn("Could not save provider to database:", dbError.message);
+      // Continue - provider is still registered on-chain
     }
+
+    // Also register in local registry for backward compatibility
+    providerRegistry.registerProvider({
+      address: providerAddress,
+      gpuType,
+      vramGB: Number(vramGB),
+      pricePerSecond: Number(pricePerSecond),
+      isActive: true,
+      reputationScore: 100,
+    });
 
     res.json({
       success: true,
@@ -130,16 +143,21 @@ router.get("/min-stake", discoveryLimiter, (_req, res) => {
  */
 router.get("/available", discoveryLimiter, async (_req, res) => {
   try {
-    // Get active providers from registry
-    const providers = providerRegistry.getActiveProviders();
+    // Get active providers from database
+    const providers = await providerRepository.findAll(true);
 
     res.json({
       success: true,
       count: providers.length,
       activeOnly: true,
       providers: providers.map(p => ({
-        ...p,
-        pricePerSecondMOVE: p.pricePerSecond / 100000000,
+        address: p.address,
+        gpuType: p.gpu_type,
+        vramGB: p.vram_gb,
+        pricePerSecond: Number(p.price_per_second),
+        pricePerSecondMOVE: Number(p.price_per_second) / 100000000,
+        isActive: p.is_active,
+        reputationScore: p.reputation_score,
       })),
     });
   } catch (error: any) {
@@ -161,54 +179,50 @@ router.get("/", discoveryLimiter, async (req, res) => {
   try {
     const activeOnly = req.query.activeOnly === "true";
     
-    // Get providers from registry
+    // Try to get providers from database first
+    const dbProviders = await providerRepository.findAll(activeOnly);
+    
+    if (dbProviders.length > 0) {
+      // Return database providers
+      const formattedProviders = dbProviders.map(p => ({
+        address: p.address,
+        gpuType: p.gpu_type,
+        vramGB: p.vram_gb,
+        pricePerSecond: Number(p.price_per_second),
+        pricePerSecondMOVE: Number(p.price_per_second) / 100000000,
+        isActive: p.is_active,
+        reputationScore: p.reputation_score,
+        totalJobsCompleted: p.total_jobs_completed,
+        totalEarnings: p.total_earnings.toString(),
+        registeredAt: p.created_at,
+        lastSeenAt: p.last_seen_at,
+      }));
+
+      return res.json({
+        success: true,
+        count: formattedProviders.length,
+        activeOnly,
+        source: "database",
+        providers: formattedProviders,
+      });
+    }
+
+    // Fallback to in-memory registry if database is empty
     const providers = activeOnly 
       ? providerRegistry.getActiveProviders()
       : providerRegistry.getAllProviders();
 
-    // Sync with on-chain data for accuracy
-    const syncedProviders = await Promise.all(
-      providers.map(async (provider) => {
-        try {
-          const onChainProvider = await providerService.getProvider(provider.address);
-          // Update registry with latest on-chain data
-          providerRegistry.updateProvider(provider.address, {
-            isActive: onChainProvider.isActive,
-            pricePerSecond: onChainProvider.pricePerSecond,
-            reputationScore: onChainProvider.reputationScore,
-          });
-          return {
-            address: provider.address,
-            gpuType: onChainProvider.gpuType,
-            vramGB: onChainProvider.vramGB,
-            pricePerSecond: onChainProvider.pricePerSecond,
-            pricePerSecondMOVE: onChainProvider.pricePerSecond / 100000000,
-            isActive: onChainProvider.isActive,
-            reputationScore: onChainProvider.reputationScore,
-            registeredAt: provider.registeredAt,
-          };
-        } catch (error: any) {
-          // Provider might not exist on-chain anymore, remove from registry
-          if (error.message.includes("not found")) {
-            providerRegistry.removeProvider(provider.address);
-            return null;
-          }
-          // Return cached data if we can't fetch
-          return {
-            ...provider,
-            pricePerSecondMOVE: provider.pricePerSecond / 100000000,
-          };
-        }
-      })
-    );
-
-    const validProviders = syncedProviders.filter(p => p !== null);
+    const formattedProviders = providers.map(p => ({
+      ...p,
+      pricePerSecondMOVE: p.pricePerSecond / 100000000,
+    }));
 
     res.json({
       success: true,
-      count: validProviders.length,
+      count: formattedProviders.length,
       activeOnly,
-      providers: validProviders,
+      source: "in-memory",
+      providers: formattedProviders,
     });
   } catch (error: any) {
     console.error("List providers error:", error);
@@ -321,6 +335,13 @@ router.patch("/:address/availability", strictLimiter, async (req, res) => {
 
     const txnHash = await providerService.updateAvailability(account, isActive);
 
+    // Update database
+    try {
+      await providerRepository.updateAvailability(address, isActive);
+    } catch (dbError: any) {
+      console.warn("Could not update provider in database:", dbError.message);
+    }
+
     // Update registry
     providerRegistry.updateProvider(address, { isActive });
 
@@ -368,6 +389,13 @@ router.patch("/:address/pricing", strictLimiter, async (req, res) => {
       account,
       Number(pricePerSecond)
     );
+
+    // Update database
+    try {
+      await providerRepository.updatePricing(address, BigInt(pricePerSecond));
+    } catch (dbError: any) {
+      console.warn("Could not update provider pricing in database:", dbError.message);
+    }
 
     // Update registry
     providerRegistry.updateProvider(address, { pricePerSecond: Number(pricePerSecond) });

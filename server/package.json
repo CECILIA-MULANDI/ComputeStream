@@ -7,7 +7,9 @@
     "start": "node dist/index.js",
     "build": "tsc",
     "test:payment-flow": "tsx test-payment-flow.ts",
-    "test:x402-client": "tsx test-x402-client.ts"
+    "test:x402-client": "tsx test-x402-client.ts",
+    "db:migrate": "tsx database/migrate.ts",
+    "db:seed": "tsx database/seed.ts"
   },
   "dependencies": {
     "@aptos-labs/ts-sdk": "^5.2.0",
@@ -22,6 +24,7 @@
     "express": "^4.22.1",
     "express-rate-limit": "^8.2.1",
     "got": "^11.8.6",
+    "pg": "^8.16.3",
     "react": "^19.2.3",
     "vite": "^7.3.0",
     "x402plus": "latest"
@@ -29,6 +32,7 @@
   "devDependencies": {
     "@types/cors": "^2.8.17",
     "@types/express": "^4.17.21",
+    "@types/pg": "^8.16.0",
     "tsx": "^4.19.0",
     "typescript": "^5.6.0"
   }

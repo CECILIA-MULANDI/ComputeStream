@@ -3,7 +3,7 @@ name = "compute_stream"
 version = "1.0.0"
 
 [addresses]
-computestream = "0xd6d9d27d944417f05fd2d2d84900ff379d0b7d7d00811bfe08ceedf0e64288b9"
+computestream = "0x69fa4604bbf4e835e978b4d7ef1cfe365f589291428a9d6332b6cd9f4e5e8ff1"
 std = "0x1"
 aptos_std = "0x1"
 aptos_framework = "0x1"

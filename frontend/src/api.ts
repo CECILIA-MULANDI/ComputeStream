@@ -109,7 +109,9 @@ export const paymentStreamApi = {
   },
 };
 
-// x402 Compute
+// x402 Compute - Uses x402 payment protocol
+import { x402ComputeApi } from './services/x402Client';
+
 export const computeApi = {
   listProviders: async () => {
     const response = await api.get('/compute/providers');
@@ -122,8 +124,8 @@ export const computeApi = {
     duration: number;
     privateKey?: string;
   }) => {
-    const response = await api.post('/compute/execute', data);
-    return response.data;
+    // Use x402 payment-enabled client
+    return await x402ComputeApi.execute(data);
   },
 };
 

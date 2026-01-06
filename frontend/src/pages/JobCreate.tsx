@@ -1,6 +1,8 @@
 import { useState, useEffect } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { computeApi, providerApi } from '../api';
+import { WalletConnect } from '../components/WalletConnect';
+import { getWalletState } from '../services/walletIntegration';
 import type { Provider } from '../types';
 
 export function JobCreate() {
@@ -10,12 +12,28 @@ export function JobCreate() {
   const [error, setError] = useState<string | null>(null);
   const [providers, setProviders] = useState<Provider[]>([]);
   const [selectedProvider, setSelectedProvider] = useState<Provider | null>(null);
+  const [walletConnected, setWalletConnected] = useState(false);
   const [formData, setFormData] = useState({
     providerAddress: searchParams.get('provider') || '',
     dockerImage: '',
     duration: '3600',
     privateKey: '',
   });
+
+  // Check wallet connection on mount
+  useEffect(() => {
+    const state = getWalletState();
+    setWalletConnected(state.connected);
+  }, []);
+
+  // Handle wallet connection changes
+  const handleWalletChange = (connected: boolean, _address: string | null) => {
+    setWalletConnected(connected);
+    // Clear error when wallet connects
+    if (connected && error?.includes('Wallet not connected')) {
+      setError(null);
+    }
+  };
 
   useEffect(() => {
     loadProviders();
@@ -83,6 +101,17 @@ export function JobCreate() {
           <p className="mt-1 text-sm text-gray-500">
             Create a new compute job with x402 payment verification
           </p>
+        </div>
+
+        {/* Wallet Connection */}
+        <div className="bg-gray-800 shadow rounded-lg p-6 mb-6">
+          <h2 className="text-lg font-semibold text-white mb-4">💳 Wallet Connection</h2>
+          <WalletConnect onConnectionChange={handleWalletChange} />
+          {!walletConnected && (
+            <p className="mt-3 text-yellow-400 text-sm">
+              ⚠️ Connect your wallet to enable x402 payments
+            </p>
+          )}
         </div>
 
         <div className="bg-white shadow rounded-lg">

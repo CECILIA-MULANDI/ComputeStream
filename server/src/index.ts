@@ -7,6 +7,9 @@ import jobRoutes from "./routes/jobs.routes.js";
 import escrowRoutes from "./routes/escrow.routes.js";
 import paymentStreamRoutes, { paymentOrchestrator } from "./routes/payment-stream.routes.js";
 import x402ComputeRoutes from "./routes/x402-compute.routes.js";
+import { generalLimiter } from "./middleware/rate-limiter.middleware.js";
+import { indexerService } from "./services/indexer.service.js";
+import { testConnection } from "../database/connection.js";
 
 // Validate required environment variables
 const requiredEnvVars = ["MOVEMENT_RPC_URL", "MOVEMENT_PAY_TO"];
@@ -22,43 +25,48 @@ if (missingEnvVars.length > 0) {
 const app = express();
 const PORT = process.env.PORT || 4402;
 
+// CORS configuration - configurable via environment
+const corsOrigins = process.env.CORS_ORIGINS 
+  ? process.env.CORS_ORIGINS.split(",").map(s => s.trim())
+  : ["http://localhost:3000", "http://localhost:5173"];
+
 app.use(cors({
-  origin: "http://localhost:3000",
+  origin: corsOrigins,
   // Support both v1 (X-PAYMENT-RESPONSE) and v2 (PAYMENT-RESPONSE) headers
   exposedHeaders: ["X-PAYMENT-RESPONSE", "PAYMENT-RESPONSE", "PAYMENT-REQUIRED"]
 }));
 
-// x402 Paywall middleware - Novel use: Compute resource access via x402
+// Global rate limiting for production
+app.use(generalLimiter);
+
+// x402 Paywall - Novel use: Compute resource access via x402
 // This enables AI agents to pay for GPU compute on-demand using x402 payment rails
+// Using x402plus for simpler Movement Network integration
 app.use(
   x402Paywall(
     process.env.MOVEMENT_PAY_TO as string,
     {
-      // Premium content (example)
       "GET /api/premium-content": {
         network: "movement",
         asset: "0x1::aptos_coin::AptosCoin",
-        maxAmountRequired: "100000000", // 1 MOVE
+        maxAmountRequired: "100000000",
         description: "Premium workshop content",
         mimeType: "application/json",
         maxTimeoutSeconds: 600
       },
-      // Compute resource access - NOVEL USE CASE
-      // AI agents can pay for GPU compute access via x402
       "GET /api/v1/compute/access/:providerAddress": {
         network: "movement",
         asset: "0x1::aptos_coin::AptosCoin",
-        maxAmountRequired: "1000000000", // 10 MOVE (will be calculated dynamically)
-        description: "GPU compute resource access - Pay-per-use compute for AI agents",
+        maxAmountRequired: "1000000000",
+        description: "GPU compute resource access",
         mimeType: "application/json",
         maxTimeoutSeconds: 300
       },
-      // Job execution endpoint - requires x402 payment
       "POST /api/v1/compute/execute": {
         network: "movement",
         asset: "0x1::aptos_coin::AptosCoin",
-        maxAmountRequired: "5000000000", // 50 MOVE (estimated for job execution)
-        description: "Execute compute job - x402 enables instant payment for compute",
+        maxAmountRequired: "5000000000",
+        description: "Execute compute job - x402 payment",
         mimeType: "application/json",
         maxTimeoutSeconds: 600
       }
@@ -108,11 +116,25 @@ app.get("/", (_req, res) => {
   });
 });
 
-app.listen(PORT, () => {
+app.listen(PORT, async () => {
   console.log(`🚀 ComputeStream API running at http://localhost:${PORT}`);
   console.log(`📡 Movement RPC: ${process.env.MOVEMENT_RPC_URL || "NOT SET"}`);
-  console.log(`📝 Contract: ${process.env.CONTRACT_ADDRESS || "0xd6d9d27d944417f05fd2d2d84900ff379d0b7d7d00811bfe08ceedf0e64288b9"}`);
+  console.log(`📝 Contract: 0x69fa4604bbf4e835e978b4d7ef1cfe365f589291428a9d6332b6cd9f4e5e8ff1`);
   console.log(`💰 Pay-to address: ${process.env.MOVEMENT_PAY_TO || "NOT SET"}`);
+  console.log(`🌐 CORS origins: ${corsOrigins.join(", ")}`);
+  console.log(`🛡️  Rate limiting: enabled`);
+  
+  // Test database connection
+  const dbConnected = await testConnection();
+  if (dbConnected) {
+    console.log(`🗄️  Database: connected`);
+    
+    // Start blockchain indexer
+    await indexerService.start();
+    console.log(`🔍 Blockchain indexer started`);
+  } else {
+    console.warn(`⚠️  Database not connected - running without persistence`);
+  }
   
   // Start payment stream orchestrator
   paymentOrchestrator.start();
@@ -123,11 +145,13 @@ app.listen(PORT, () => {
 process.on("SIGINT", () => {
   console.log("\n🛑 Shutting down gracefully...");
   paymentOrchestrator.stop();
+  indexerService.stop();
   process.exit(0);
 });
 
 process.on("SIGTERM", () => {
   console.log("\n🛑 Shutting down gracefully...");
   paymentOrchestrator.stop();
+  indexerService.stop();
   process.exit(0);
 });

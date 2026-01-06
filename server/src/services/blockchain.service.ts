@@ -25,15 +25,18 @@ const customGotClient = got.extend({
 });
 
 // Custom client provider for AptosConfig
-// The SDK passes the full URL including /v1 path
+// The SDK passes URLs without /v1, we need to insert it after the domain
 const customClient = {
   provider: async (requestOptions: any) => {
     const { params, method, url, headers, body } = requestOptions;
     
-    // Ensure URL has /v1 path for Aptos API calls
+    // Insert /v1 after the domain if not present
     let requestUrl = url;
-    if (!requestUrl.includes('/v1')) {
-      requestUrl = requestUrl.replace(/\/?$/, '/v1');
+    if (!requestUrl.includes('/v1/')) {
+      // Insert /v1 after the domain (e.g., after https://testnet.movementnetwork.xyz)
+      requestUrl = requestUrl.replace(/(https?:\/\/[^\/]+)(\/?)/, '$1/v1/');
+      // Clean up any double slashes (except in https://)
+      requestUrl = requestUrl.replace(/([^:])\/\//g, '$1/');
     }
     
     console.log(`[CustomClient] ${method} ${requestUrl}`);
@@ -87,7 +90,7 @@ export class BlockchainService {
   private config: AptosConfig;
   
   //Contract address
-  readonly CONTRACT_ADDRESS = "0xd6d9d27d944417f05fd2d2d84900ff379d0b7d7d00811bfe08ceedf0e64288b9";
+  readonly CONTRACT_ADDRESS = "0x69fa4604bbf4e835e978b4d7ef1cfe365f589291428a9d6332b6cd9f4e5e8ff1";
   
   constructor() {
     let rpcUrl = process.env.MOVEMENT_RPC_URL;

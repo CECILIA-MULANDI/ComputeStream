@@ -265,7 +265,7 @@ module computestream::job_registry{
     job.output_url
   }
 
-  /// Get the current job counter value (next job ID will be this value)
+  
   #[view]
   public fun get_job_counter(): u64 acquires JobCounter {
     assert!(exists<JobCounter>(@computestream), E_JOB_NOT_FOUND);
