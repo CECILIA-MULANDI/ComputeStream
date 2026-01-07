@@ -4,7 +4,7 @@
  */
 
 // Wallet types supported
-export type WalletType = 'petra' | 'movement' | 'pontem' | 'robin' | 'razor';
+export type WalletType = 'petra' | 'movement' | 'pontem' | 'robin' | 'razor' | 'nightly';
 
 // Wallet state
 interface WalletState {
@@ -41,6 +41,11 @@ function getWalletProvider(walletType: WalletType): any {
   });
   
   switch (walletType) {
+    case 'nightly':
+      // Nightly wallet exposes chain-specific APIs
+      // For Movement (Move-based), use the aptos namespace
+      console.log('Nightly wallet namespaces:', w.nightly ? Object.keys(w.nightly) : 'not found');
+      return w.nightly?.aptos || w.nightly?.movement || w.aptos;
     case 'razor':
       // Razor wallet exposes methods under razor.aptos namespace!
       return w.razor?.aptos || w.razorWallet?.aptos || w.razor || w.razorWallet || w.aptos;
@@ -54,7 +59,8 @@ function getWalletProvider(walletType: WalletType): any {
       return w.movement || w.aptos;
     default:
       // Try all known wallet providers (check namespaced versions first)
-      return w.razor?.aptos || w.aptos || w.petra || w.razor || w.razorWallet || w.robin || w.pontem || w.martian || w.nightly;
+      // Nightly uses chain-specific namespaces (nightly.aptos for Move-based chains)
+      return w.nightly?.aptos || w.razor?.aptos || w.aptos || w.petra || w.razor || w.razorWallet || w.robin || w.pontem || w.martian;
   }
 }
 
@@ -257,28 +263,84 @@ export async function signTransaction(payload: {
     console.log('🔐 Preparing transaction...');
     console.log('Payload:', payload);
     
-    // Convert numeric arguments to strings (some wallets require this)
+    // Convert numeric arguments to strings (Move u64 expects string representation)
     const stringifiedArgs = payload.functionArguments.map(arg => 
       typeof arg === 'number' ? String(arg) : arg
     );
     
-    const txPayload = {
-      payload: {
-        type: 'entry_function_payload',
-        function: payload.function,
-        type_arguments: payload.typeArguments,
-        arguments: stringifiedArgs,
-      }
-    };
+    // Parse function string to get module address, module name, and function name
+    // Format: "0x123::module_name::function_name"
+    const functionParts = payload.function.split('::');
+    const moduleAddress = functionParts[0];
+    const moduleName = functionParts[1];
+    const functionName = functionParts[2];
     
-    console.log('Sending transaction:', txPayload);
+    console.log('=== Transaction Details ===');
+    console.log('Module Address:', moduleAddress);
+    console.log('Module Name:', moduleName);
+    console.log('Function Name:', functionName);
+    console.log('Arguments:', stringifiedArgs);
+    console.log('===========================');
     
     // Sign and submit
     if (typeof wallet.signAndSubmitTransaction !== 'function') {
       throw new Error('Wallet does not support transaction signing');
     }
     
-    const result = await wallet.signAndSubmitTransaction(txPayload);
+    console.log('Wallet methods available:', Object.keys(wallet));
+    
+    // Check if wallet has specific Movement/Aptos methods
+    const hasSignTransaction = typeof wallet.signTransaction === 'function';
+    const hasSignAndSubmit = typeof wallet.signAndSubmitTransaction === 'function';
+    
+    console.log('Wallet capabilities:', { hasSignTransaction, hasSignAndSubmit });
+    
+    // Build transaction payload - Nightly/Aptos wallets expect this format
+    const txPayload = {
+      type: 'entry_function_payload',
+      function: payload.function,
+      type_arguments: payload.typeArguments,
+      arguments: stringifiedArgs,
+    };
+    
+    // Alternative format for some wallets (Nightly uses this)
+    const altPayload = {
+      payload: {
+        function: payload.function,
+        typeArguments: payload.typeArguments,
+        functionArguments: stringifiedArgs,
+      }
+    };
+    
+    console.log('Trying transaction with payload:', JSON.stringify(txPayload, null, 2));
+    
+    let result;
+    
+    if (hasSignAndSubmit) {
+      // Try standard format first
+      try {
+        result = await wallet.signAndSubmitTransaction(txPayload);
+      } catch (e1: any) {
+        console.log('Standard format failed:', e1.message);
+        // Try alternative format
+        try {
+          console.log('Trying alternative format:', JSON.stringify(altPayload, null, 2));
+          result = await wallet.signAndSubmitTransaction(altPayload);
+        } catch (e2: any) {
+          console.log('Alternative format failed:', e2.message);
+          // Try with just the inner payload
+          try {
+            console.log('Trying inner payload only...');
+            result = await wallet.signAndSubmitTransaction(altPayload.payload);
+          } catch (e3: any) {
+            console.log('Inner payload failed:', e3.message);
+            throw e1; // Throw original error
+          }
+        }
+      }
+    } else {
+      throw new Error('Wallet does not support transaction signing');
+    }
     console.log('Transaction result:', result);
     const txnHash = result?.hash || result?.txnHash || (typeof result === 'string' ? result : '');
     
@@ -291,7 +353,21 @@ export async function signTransaction(payload: {
     return txnHash;
   } catch (error: any) {
     console.error('Transaction signing failed:', error);
-    throw error;
+    
+    // Extract detailed error message
+    let errorMessage = error.message || 'Transaction failed';
+    
+    // Check for simulation errors
+    if (errorMessage.includes('simulation') || errorMessage.includes('SIMULATION')) {
+      errorMessage = `Simulation failed: ${errorMessage}\n\nThis usually means:\n1. Contract not deployed on this network\n2. Wrong network selected in wallet\n3. Insufficient balance for stake`;
+    }
+    
+    // Check for module not found
+    if (errorMessage.includes('MODULE_NOT_FOUND') || errorMessage.includes('FUNCTION_NOT_FOUND')) {
+      errorMessage = `Contract not found: The provider_registry contract may not be deployed on this network.\n\nMake sure Razor Wallet is connected to Movement Testnet.`;
+    }
+    
+    throw new Error(errorMessage);
   }
 }
 
@@ -316,8 +392,9 @@ export function isWalletAvailable(): boolean {
 /**
  * Get wallet installation URL
  */
-export function getWalletInstallUrl(walletType: WalletType = 'razor'): string {
+export function getWalletInstallUrl(walletType: WalletType = 'nightly'): string {
   const urls: Record<WalletType, string> = {
+    nightly: 'https://nightly.app/',
     petra: 'https://petra.app/',
     movement: 'https://movementlabs.xyz/',
     pontem: 'https://pontem.network/pontem-wallet',
@@ -325,6 +402,6 @@ export function getWalletInstallUrl(walletType: WalletType = 'razor'): string {
     razor: 'https://razorwallet.xyz/',
   };
   
-  return urls[walletType] || urls.razor;
+  return urls[walletType] || urls.nightly;
 }
 

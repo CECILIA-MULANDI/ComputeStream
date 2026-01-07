@@ -4,12 +4,10 @@ import { ProviderRegister } from './pages/ProviderRegister';
 import { JobCreate } from './pages/JobCreate';
 import { JobDetail } from './pages/JobDetail';
 import { Dashboard } from './pages/Dashboard';
-import { WalletProvider } from './providers/WalletProvider';
 
 function App() {
   return (
-    <WalletProvider>
-      <Router>
+    <Router>
       <div className="min-h-screen bg-gradient-to-br from-slate-50 to-slate-100">
         <nav className="bg-white shadow-sm border-b border-slate-200">
           <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
@@ -60,7 +58,6 @@ function App() {
         </main>
       </div>
     </Router>
-    </WalletProvider>
   );
 }
 

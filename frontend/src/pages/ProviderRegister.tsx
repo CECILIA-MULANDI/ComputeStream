@@ -1,21 +1,33 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { useWallet } from '@aptos-labs/wallet-adapter-react';
-import { InputTransactionData } from "@aptos-labs/wallet-adapter-core";
 import { providerApi } from '../api';
+import {
+  connectWallet,
+  disconnectWallet,
+  getWalletState,
+  signTransaction,
+} from '../services/walletIntegration';
 
 export function ProviderRegister() {
   const navigate = useNavigate();
-  const { signAndSubmitTransaction, account, connected, connect, disconnect, wallet } = useWallet();
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [minStake, setMinStake] = useState<number | null>(null);
+  const [connected, setConnected] = useState(false);
+  const [walletAddress, setWalletAddress] = useState<string | null>(null);
   const [formData, setFormData] = useState({
     gpuType: '',
     vramGB: '',
     pricePerSecond: '',
     stakeAmount: '',
   });
+
+  // Check wallet state on mount
+  useEffect(() => {
+    const state = getWalletState();
+    setConnected(state.connected);
+    setWalletAddress(state.address);
+  }, []);
 
   useEffect(() => {
     const loadMinStake = async () => {
@@ -34,10 +46,39 @@ export function ProviderRegister() {
     loadMinStake();
   }, []);
 
+  const handleConnect = async () => {
+    try {
+      setLoading(true);
+      setError(null);
+      
+      // Check for Nightly wallet
+      const w = window as any;
+      if (!w.nightly) {
+        setError('Nightly Wallet not found. Please install the extension.');
+        window.open('https://nightly.app/', '_blank');
+        return;
+      }
+      
+      const address = await connectWallet('nightly');
+      setConnected(true);
+      setWalletAddress(address);
+    } catch (err: any) {
+      setError(err.message || 'Failed to connect wallet');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleDisconnect = async () => {
+    await disconnectWallet();
+    setConnected(false);
+    setWalletAddress(null);
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     
-    if (!connected || !account) {
+    if (!connected || !walletAddress) {
       setError('Please connect your wallet first');
       return;
     }
@@ -52,35 +93,31 @@ export function ProviderRegister() {
       // Sign the registration transaction with wallet
       const CONTRACT_ADDRESS = '0x69fa4604bbf4e835e978b4d7ef1cfe365f589291428a9d6332b6cd9f4e5e8ff1';
       
-      console.log('Registering provider with:', {
+      const txArgs = {
         gpuType: formData.gpuType,
-        vramGB: formData.vramGB,
+        vramGB: Number(formData.vramGB),
         priceInOctas,
         stakeInOctas,
-        contract: CONTRACT_ADDRESS,
-      });
-      
-      // Build transaction with correct structure for Aptos wallet adapter
-      const transaction: InputTransactionData = {
-        data: {
-          function: `${CONTRACT_ADDRESS}::provider_registry::register_provider`,
-          typeArguments: [],
-          functionArguments: [
-            formData.gpuType,
-            String(formData.vramGB),
-            String(priceInOctas),
-            String(stakeInOctas),
-          ]
-        }
       };
       
-      console.log('Transaction payload:', JSON.stringify(transaction, null, 2));
+      console.log('=== REGISTRATION DETAILS ===');
+      console.log('Contract:', CONTRACT_ADDRESS);
+      console.log('Function:', `${CONTRACT_ADDRESS}::provider_registry::register_provider`);
+      console.log('Arguments:', txArgs);
+      console.log('Wallet address:', walletAddress);
+      console.log('============================');
       
-      // Submit transaction using wallet adapter
-      const response = await signAndSubmitTransaction(transaction);
-      console.log('✅ Transaction response:', response);
-      
-      const txHash = response?.hash || response?.txnHash || response;
+      // Submit transaction using Razor wallet
+      const txHash = await signTransaction({
+        function: `${CONTRACT_ADDRESS}::provider_registry::register_provider`,
+        typeArguments: [],
+        functionArguments: [
+          txArgs.gpuType,        // String
+          txArgs.vramGB,         // u64
+          txArgs.priceInOctas,   // u64
+          txArgs.stakeInOctas,   // u64
+        ],
+      });
 
       console.log('Registration tx:', txHash);
       
@@ -90,7 +127,7 @@ export function ProviderRegister() {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            address: account.address,
+            address: walletAddress,
             txHash,
             gpuType: formData.gpuType,
             vramGB: Number(formData.vramGB),
@@ -104,7 +141,7 @@ export function ProviderRegister() {
         // Continue - registration succeeded on-chain
       }
 
-      alert(`Provider registered successfully!\nAddress: ${account.address}\nTx: ${txHash}`);
+      alert(`Provider registered successfully!\nAddress: ${walletAddress}\nTx: ${txHash}`);
       navigate('/providers');
     } catch (err: any) {
       console.error('Registration error:', err);
@@ -127,29 +164,38 @@ export function ProviderRegister() {
 
         {/* Wallet Connection */}
         <div className="bg-gray-800 shadow rounded-lg p-6 mb-6">
-          <h2 className="text-lg font-semibold text-white mb-4">💳 Connect Wallet</h2>
+          <h2 className="text-lg font-semibold text-white mb-4">💳 Connect Nightly Wallet</h2>
           {!connected ? (
             <div>
               <button
-                onClick={() => connect("Razor Wallet")}
-                className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700"
+                onClick={handleConnect}
+                disabled={loading}
+                className="px-4 py-2 bg-purple-600 text-white rounded-md hover:bg-purple-700 disabled:opacity-50 flex items-center gap-2"
               >
-                Connect Wallet
+                {loading ? 'Connecting...' : 'Connect Nightly Wallet'}
               </button>
-              <p className="mt-3 text-yellow-400 text-sm">
-                ⚠️ Connect your wallet to register as a provider (Razor, Petra, or other Aptos wallets)
+              <p className="mt-3 text-gray-400 text-sm">
+                Connect your Nightly Wallet to register as a provider on Movement L1
               </p>
+              <a
+                href="https://nightly.app/"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="mt-2 inline-block text-purple-400 text-sm hover:underline"
+              >
+                Don't have Nightly Wallet? Install it here →
+              </a>
             </div>
           ) : (
             <div>
               <p className="text-green-400 text-sm mb-2">
-                ✅ Connected: {wallet?.name || 'Wallet'}
+                ✅ Connected: Nightly Wallet
               </p>
               <p className="text-gray-300 text-sm mb-3">
-                Address: {account?.address.slice(0, 10)}...{account?.address.slice(-6)}
+                Address: {walletAddress?.slice(0, 10)}...{walletAddress?.slice(-6)}
               </p>
               <button
-                onClick={disconnect}
+                onClick={handleDisconnect}
                 className="px-4 py-2 bg-red-600 text-white rounded-md hover:bg-red-700 text-sm"
               >
                 Disconnect
