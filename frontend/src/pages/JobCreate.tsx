@@ -1,8 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { computeApi, providerApi } from '../api';
-import { WalletConnect } from '../components/WalletConnect';
-import { getWalletState } from '../services/walletIntegration';
+import { getWalletState, signTransaction } from '../services/walletIntegration';
 import type { Provider } from '../types';
 
 export function JobCreate() {
@@ -12,7 +11,6 @@ export function JobCreate() {
   const [error, setError] = useState<string | null>(null);
   const [providers, setProviders] = useState<Provider[]>([]);
   const [selectedProvider, setSelectedProvider] = useState<Provider | null>(null);
-  const [walletConnected, setWalletConnected] = useState(false);
   const [formData, setFormData] = useState({
     providerAddress: searchParams.get('provider') || '',
     dockerImage: '',
@@ -22,17 +20,10 @@ export function JobCreate() {
   // Check wallet connection on mount
   useEffect(() => {
     const state = getWalletState();
-    setWalletConnected(state.connected);
-  }, []);
-
-  // Handle wallet connection changes
-  const handleWalletChange = (connected: boolean, _address: string | null) => {
-    setWalletConnected(connected);
-    // Clear error when wallet connects
-    if (connected && error?.includes('Wallet not connected')) {
-      setError(null);
+    if (!state.connected) {
+      setError('Please connect your wallet in the navigation bar to create a job.');
     }
-  };
+  }, []);
 
   useEffect(() => {
     loadProviders();
@@ -75,10 +66,87 @@ export function JobCreate() {
         duration: Number(formData.duration),
       });
 
+      // x402 payment was successful! Now create the job on-chain
       if (result.job && result.job.jobId) {
+        // Job was created automatically
         navigate(`/jobs/${result.job.buyerAddress}/${result.job.jobId}`);
+      } else if (result.x402Payment?.verified) {
+        // Payment verified - now create job on-chain automatically
+        const paidAmount = result.x402Payment?.paidAmountMOVE || 0;
+        console.log('✅ x402 Payment verified! Paid:', paidAmount, 'MOVE');
+        console.log('🔨 Creating job on-chain...');
+        
+        try {
+          // Get wallet address
+          const walletState = getWalletState();
+          if (!walletState.connected || !walletState.address) {
+            throw new Error('Wallet not connected');
+          }
+          
+          // Calculate escrow amount (use the paid amount or estimate)
+          // Note: totalPrice from x402 is already in octas
+          const escrowAmount = result.jobDetails?.totalPrice || (result.jobDetails?.pricePerSecond * result.jobDetails?.duration);
+          
+          console.log('Creating job with parameters:');
+          console.log('  Provider:', formData.providerAddress);
+          console.log('  Docker Image:', formData.dockerImage);
+          console.log('  Escrow Amount (octas):', escrowAmount);
+          console.log('  Duration (seconds):', result.jobDetails?.duration || formData.duration);
+          
+          // Create job on-chain using wallet
+          const CONTRACT_ADDRESS = '0x69fa4604bbf4e835e978b4d7ef1cfe365f589291428a9d6332b6cd9f4e5e8ff1';
+          const txHash = await signTransaction({
+            function: `${CONTRACT_ADDRESS}::job_registry::create_job`,
+            typeArguments: [],
+            functionArguments: [
+              formData.providerAddress,
+              formData.dockerImage,
+              String(escrowAmount), // Already in octas
+              String(result.jobDetails?.duration || formData.duration),
+            ],
+          });
+          
+          console.log('✅ Job creation transaction:', txHash);
+          
+          // Wait a moment for transaction to be indexed
+          await new Promise(resolve => setTimeout(resolve, 2000));
+          
+          // Sync to database (jobId will be extracted from transaction events by indexer)
+          const syncResponse = await fetch('/api/v1/jobs/sync', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              txHash: txHash,
+              buyerAddress: walletState.address,
+              providerAddress: formData.providerAddress,
+              dockerImage: formData.dockerImage,
+              escrowAmount: escrowAmount,
+              maxDuration: result.jobDetails?.duration || formData.duration,
+              // jobId is optional - indexer will extract it from transaction events
+            }),
+          });
+          
+          if (syncResponse.ok) {
+            const syncData = await syncResponse.json();
+            if (syncData.jobId) {
+              navigate(`/jobs/${walletState.address}/${syncData.jobId}`);
+              return;
+            }
+          } else {
+            const errorData = await syncResponse.json().catch(() => ({}));
+            console.error('Sync error:', errorData);
+          }
+          
+          // If sync failed or no jobId, show success - indexer will pick it up
+          alert(`✅ Job created on-chain!\n\nTransaction: ${txHash.slice(0, 10)}...\n\nThe indexer will sync the job automatically. Check your jobs page in a few seconds.`);
+          
+        } catch (jobError: any) {
+          console.error('Job creation error:', jobError);
+          setError(`Payment successful, but job creation failed: ${jobError.message}`);
+        }
       } else {
-        alert('Job access granted! You can now create the job manually.');
+        // Fallback message
+        alert('✅ Payment successful! Check console for next steps.');
       }
     } catch (err: any) {
       setError(err.response?.data?.error || err.message || 'Job creation failed');
@@ -101,16 +169,6 @@ export function JobCreate() {
           </p>
         </div>
 
-        {/* Wallet Connection */}
-        <div className="bg-gray-800 shadow rounded-lg p-6 mb-6">
-          <h2 className="text-lg font-semibold text-white mb-4">💳 Wallet Connection</h2>
-          <WalletConnect onConnectionChange={handleWalletChange} />
-          {!walletConnected && (
-            <p className="mt-3 text-yellow-400 text-sm">
-              ⚠️ Connect your wallet to enable x402 payments
-            </p>
-          )}
-        </div>
 
         <div className="bg-white shadow rounded-lg">
           <form onSubmit={handleSubmit} className="p-6 space-y-6">

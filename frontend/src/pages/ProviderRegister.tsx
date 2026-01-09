@@ -2,8 +2,6 @@ import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { providerApi } from '../api';
 import {
-  connectWallet,
-  disconnectWallet,
   getWalletState,
   signTransaction,
 } from '../services/walletIntegration';
@@ -46,34 +44,6 @@ export function ProviderRegister() {
     loadMinStake();
   }, []);
 
-  const handleConnect = async () => {
-    try {
-      setLoading(true);
-      setError(null);
-      
-      // Check for Nightly wallet
-      const w = window as any;
-      if (!w.nightly) {
-        setError('Nightly Wallet not found. Please install the extension.');
-        window.open('https://nightly.app/', '_blank');
-        return;
-      }
-      
-      const address = await connectWallet('nightly');
-      setConnected(true);
-      setWalletAddress(address);
-    } catch (err: any) {
-      setError(err.message || 'Failed to connect wallet');
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleDisconnect = async () => {
-    await disconnectWallet();
-    setConnected(false);
-    setWalletAddress(null);
-  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -107,7 +77,7 @@ export function ProviderRegister() {
       console.log('Wallet address:', walletAddress);
       console.log('============================');
       
-      // Submit transaction using Razor wallet
+     
       const txHash = await signTransaction({
         function: `${CONTRACT_ADDRESS}::provider_registry::register_provider`,
         typeArguments: [],
@@ -162,47 +132,13 @@ export function ProviderRegister() {
           </p>
         </div>
 
-        {/* Wallet Connection */}
-        <div className="bg-gray-800 shadow rounded-lg p-6 mb-6">
-          <h2 className="text-lg font-semibold text-white mb-4">💳 Connect Nightly Wallet</h2>
-          {!connected ? (
-            <div>
-              <button
-                onClick={handleConnect}
-                disabled={loading}
-                className="px-4 py-2 bg-purple-600 text-white rounded-md hover:bg-purple-700 disabled:opacity-50 flex items-center gap-2"
-              >
-                {loading ? 'Connecting...' : 'Connect Nightly Wallet'}
-              </button>
-              <p className="mt-3 text-gray-400 text-sm">
-                Connect your Nightly Wallet to register as a provider on Movement L1
-              </p>
-              <a
-                href="https://nightly.app/"
-                target="_blank"
-                rel="noopener noreferrer"
-                className="mt-2 inline-block text-purple-400 text-sm hover:underline"
-              >
-                Don't have Nightly Wallet? Install it here →
-              </a>
-            </div>
-          ) : (
-            <div>
-              <p className="text-green-400 text-sm mb-2">
-                ✅ Connected: Nightly Wallet
-              </p>
-              <p className="text-gray-300 text-sm mb-3">
-                Address: {walletAddress?.slice(0, 10)}...{walletAddress?.slice(-6)}
-              </p>
-              <button
-                onClick={handleDisconnect}
-                className="px-4 py-2 bg-red-600 text-white rounded-md hover:bg-red-700 text-sm"
-              >
-                Disconnect
-              </button>
-            </div>
-          )}
-        </div>
+        {!connected && (
+          <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4 mb-6">
+            <p className="text-yellow-800">
+              ⚠️ Please connect your wallet in the navigation bar to register as a provider.
+            </p>
+          </div>
+        )}
 
         <div className="bg-white shadow rounded-lg">
           <form onSubmit={handleSubmit} className="p-6 space-y-6">

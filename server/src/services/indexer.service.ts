@@ -1,5 +1,8 @@
 import { BlockchainService } from "./blockchain.service.js";
 import { providerRepository } from "../../database/repositories/provider.repository.js";
+import { jobRepository } from "../../database/repositories/job.repository.js";
+import { escrowRepository } from "../../database/repositories/escrow.repository.js";
+import { paymentStreamRepository } from "../../database/repositories/payment-stream.repository.js";
 import { testConnection, pool } from "../../database/connection.js";
 
 const CONTRACT_ADDRESS = "0x69fa4604bbf4e835e978b4d7ef1cfe365f589291428a9d6332b6cd9f4e5e8ff1";
@@ -375,8 +378,19 @@ export class IndexerService {
    */
   private async handleJobCreated(eventData: any) {
     try {
-      // TODO: Implement job repository and save to database
-      console.log(`📋 Job created: ${eventData.job_id}`);
+      const jobId = Number(eventData.job_id);
+      
+      await jobRepository.upsert({
+        job_id: jobId,
+        buyer_address: eventData.buyer_address || eventData.buyer,
+        provider_address: eventData.provider_address || eventData.provider,
+        docker_image: eventData.docker_image || '',
+        status: 'pending',
+        escrow_amount: BigInt(eventData.escrow_amount || 0),
+        max_duration: Number(eventData.max_duration || 0),
+      });
+
+      console.log(`📋 Indexed job: ${jobId}`);
     } catch (error: any) {
       console.error("Error handling JobCreated:", error.message);
     }
@@ -387,8 +401,31 @@ export class IndexerService {
    */
   private async handleJobStatusChanged(eventData: any) {
     try {
-      // TODO: Update job status in database
-      console.log(`🔄 Job status changed: ${eventData.job_id}`);
+      const jobId = Number(eventData.job_id);
+      const newStatus = eventData.new_status || eventData.status;
+      
+      // Map numeric status to string if needed
+      const statusMap: Record<number, string> = {
+        0: 'pending',
+        1: 'running',
+        2: 'completed',
+        3: 'failed',
+        4: 'cancelled'
+      };
+      
+      const status = typeof newStatus === 'number' ? statusMap[newStatus] : newStatus;
+      
+      if (status === 'running' && eventData.start_time) {
+        await jobRepository.startJob(jobId, Number(eventData.start_time));
+      } else if (status === 'completed' && eventData.end_time) {
+        await jobRepository.completeJob(jobId, Number(eventData.end_time), eventData.output_url);
+      } else if (status === 'failed' && eventData.end_time) {
+        await jobRepository.failJob(jobId, Number(eventData.end_time));
+      } else {
+        await jobRepository.updateStatus(jobId, status);
+      }
+
+      console.log(`🔄 Updated job ${jobId} status to: ${status}`);
     } catch (error: any) {
       console.error("Error handling JobStatusChanged:", error.message);
     }
@@ -399,8 +436,21 @@ export class IndexerService {
    */
   private async handleEscrowDeposited(eventData: any) {
     try {
-      // TODO: Implement escrow repository and save to database
-      console.log(`💰 Escrow deposited: ${eventData.job_id}`);
+      const jobId = Number(eventData.job_id);
+      const amount = BigInt(eventData.amount || eventData.escrow_amount || 0);
+      
+      await escrowRepository.upsert({
+        job_id: jobId,
+        buyer_address: eventData.buyer_address || eventData.buyer || eventData.depositor,
+        provider_address: eventData.provider_address || eventData.provider || '',
+        total_amount: amount,
+        released_amount: 0n,
+        remaining_amount: amount,
+        is_active: true,
+        transaction_hash: eventData.transaction_hash,
+      });
+
+      console.log(`💰 Indexed escrow for job ${jobId}: ${amount} octas`);
     } catch (error: any) {
       console.error("Error handling EscrowDeposited:", error.message);
     }
@@ -411,8 +461,20 @@ export class IndexerService {
    */
   private async handlePaymentStreamStarted(eventData: any) {
     try {
-      // TODO: Implement payment stream repository
-      console.log(`▶️  Payment stream started: ${eventData.job_id}`);
+      const jobId = Number(eventData.job_id);
+      
+      await paymentStreamRepository.upsert({
+        job_id: jobId,
+        payer_address: eventData.payer_address || eventData.payer || eventData.buyer,
+        payee_address: eventData.payee_address || eventData.payee || eventData.provider,
+        rate_per_second: BigInt(eventData.rate_per_second || eventData.rate || 0),
+        start_time: Number(eventData.start_time || Math.floor(Date.now() / 1000)),
+        total_streamed: 0n,
+        is_active: true,
+        transaction_hash: eventData.transaction_hash,
+      });
+
+      console.log(`▶️  Indexed payment stream for job ${jobId}`);
     } catch (error: any) {
       console.error("Error handling PaymentStreamStarted:", error.message);
     }
@@ -420,8 +482,12 @@ export class IndexerService {
 
   private async handlePaymentStreamStopped(eventData: any) {
     try {
-      // TODO: Update payment stream status
-      console.log(`⏹️  Payment stream stopped: ${eventData.job_id}`);
+      const jobId = Number(eventData.job_id);
+      const endTime = Number(eventData.end_time || Math.floor(Date.now() / 1000));
+      
+      await paymentStreamRepository.closeStream(jobId, endTime);
+
+      console.log(`⏹️  Closed payment stream for job ${jobId}`);
     } catch (error: any) {
       console.error("Error handling PaymentStreamStopped:", error.message);
     }
@@ -429,7 +495,27 @@ export class IndexerService {
 
   private async handlePaymentStreamEvent(eventData: any) {
     try {
-      console.log(`💸 Payment stream event:`, eventData);
+      const jobId = Number(eventData.job_id);
+      
+      // If this is a payment processed event, record it
+      if (eventData.amount) {
+        const stream = await paymentStreamRepository.findByJobId(jobId);
+        if (stream && stream.id) {
+          await paymentStreamRepository.recordPaymentEvent({
+            job_id: jobId,
+            stream_id: stream.id,
+            amount: BigInt(eventData.amount),
+            timestamp: new Date(),
+            transaction_hash: eventData.transaction_hash,
+            block_number: eventData.block_number ? Number(eventData.block_number) : undefined,
+          });
+          
+          // Also update the total streamed
+          await paymentStreamRepository.updateStreamedAmount(jobId, BigInt(eventData.amount));
+        }
+      }
+
+      console.log(`💸 Processed payment stream event for job ${jobId}`);
     } catch (error: any) {
       console.error("Error handling PaymentStream event:", error.message);
     }

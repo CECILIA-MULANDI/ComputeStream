@@ -4,7 +4,6 @@ import { BlockchainService } from "../services/blockchain.service.js";
 import { providerRepository } from "../../database/repositories/provider.repository.js";
 import { 
   strictLimiter, 
-  veryStrictLimiter, 
   discoveryLimiter,
   generalLimiter 
 } from "../middleware/rate-limiter.middleware.js";
@@ -72,64 +71,85 @@ router.post("/sync", strictLimiter, async (req, res) => {
 });
 
 /**
- * @deprecated Use wallet signing + /sync endpoint instead
- * POST /api/v1/providers/register
- * Legacy endpoint - registers provider using private key (server-side)
+ * POST /api/v1/providers/sync/availability
+ * Sync provider availability update to database after wallet-based transaction
+ * 
+ * Body:
+ * {
+ *   "address": "0x...",
+ *   "txHash": "0x...",
+ *   "isActive": true
+ * }
  */
-router.post("/register", veryStrictLimiter, async (req, res) => {
+router.post("/sync/availability", strictLimiter, async (req, res) => {
   try {
-    const { privateKey, gpuType, vramGB, pricePerSecond, stakeAmount } = req.body;
+    const { address, txHash, isActive } = req.body;
 
-    // Validate required fields
-    if (!privateKey || !gpuType || vramGB === undefined || !pricePerSecond || !stakeAmount) {
+    if (!address || isActive === undefined) {
       return res.status(400).json({
-        error: "Missing required fields. Note: For wallet-based registration, use /sync endpoint instead.",
-        required: ["privateKey", "gpuType", "vramGB", "pricePerSecond", "stakeAmount"],
+        error: "Missing required fields",
+        required: ["address", "isActive"],
       });
     }
 
-    // Create account from private key
-    const account = blockchainService.createAccountFromPrivateKey(privateKey);
-
-    // Register provider on-chain
-    const txnHash = await providerService.registerProvider(account, {
-      gpuType,
-      vramGB: Number(vramGB),
-      pricePerSecond: Number(pricePerSecond),
-      stakeAmount: Number(stakeAmount),
-    });
-
-    const providerAddress = account.accountAddress.toString();
-
-    // Save to database
-    await providerRepository.upsert({
-      address: providerAddress,
-      gpu_type: gpuType,
-      vram_gb: Number(vramGB),
-      price_per_second: BigInt(pricePerSecond),
-      stake_amount: BigInt(stakeAmount),
-      reputation_score: 100,
-      is_active: true,
-      total_jobs_completed: 0,
-      total_earnings: 0n,
-    });
-    console.log(`✅ Provider ${providerAddress} saved to database`);
+    // Update database
+    await providerRepository.updateAvailability(address, isActive);
+    
+    console.log(`✅ Provider ${address} availability synced: ${isActive} (tx: ${txHash || 'N/A'})`);
 
     res.json({
       success: true,
-      transactionHash: txnHash,
-      providerAddress,
-      message: "Provider registered successfully",
+      address,
+      isActive,
+      txHash,
+      message: "Provider availability synced successfully",
     });
   } catch (error: any) {
-    console.error("Provider registration error:", error);
+    console.error("Provider availability sync error:", error);
+    res.status(500).json({
+      error: error.message || "Failed to sync provider availability",
+    });
+  }
+});
+
+/**
+ * POST /api/v1/providers/sync/pricing
+ * Sync provider pricing update to database after wallet-based transaction
+ * 
+ * Body:
+ * {
+ *   "address": "0x...",
+ *   "txHash": "0x...",
+ *   "pricePerSecond": 2000000
+ * }
+ */
+router.post("/sync/pricing", strictLimiter, async (req, res) => {
+  try {
+    const { address, txHash, pricePerSecond } = req.body;
+
+    if (!address || !pricePerSecond) {
+      return res.status(400).json({
+        error: "Missing required fields",
+        required: ["address", "pricePerSecond"],
+      });
+    }
+
+    // Update database
+    await providerRepository.updatePricing(address, BigInt(pricePerSecond));
     
-    const statusCode = error.response?.status || error.statusCode || 500;
-    const errorMessage = error.message || "Failed to register provider";
-    
-    res.status(statusCode).json({
-      error: errorMessage,
-      suggestion: "Consider using wallet signing + /sync endpoint for a more secure registration flow.",
+    console.log(`✅ Provider ${address} pricing synced: ${pricePerSecond} (tx: ${txHash || 'N/A'})`);
+
+    res.json({
+      success: true,
+      address,
+      pricePerSecond: Number(pricePerSecond),
+      txHash,
+      message: "Provider pricing synced successfully",
+    });
+  } catch (error: any) {
+    console.error("Provider pricing sync error:", error);
+    res.status(500).json({
+      error: error.message || "Failed to sync provider pricing",
     });
   }
 });
@@ -142,17 +162,16 @@ router.get("/min-stake", discoveryLimiter, (_req, res) => {
   res.json({
     success: true,
     minStakeAmount: providerService.getMinStakeAmount(),
-    minStakeAmountMOVE: providerService.getMinStakeAmount() / 100000000, // Convert to MOVE
+    minStakeAmountMOVE: providerService.getMinStakeAmount() / 100000000,
   });
 });
 
 /**
  * GET /api/v1/providers/available
- * List only active providers
+ * List only active providers from database
  */
 router.get("/available", discoveryLimiter, async (_req, res) => {
   try {
-    // Get active providers from database
     const providers = await providerRepository.findAll(true);
 
     res.json({
@@ -179,16 +198,14 @@ router.get("/available", discoveryLimiter, async (_req, res) => {
 
 /**
  * GET /api/v1/providers
- * List all providers (discovery endpoint)
+ * List all providers from database
  * 
  * Query params:
- * - activeOnly: boolean (default: false) - only return active providers
+ * - activeOnly: boolean (default: false)
  */
 router.get("/", discoveryLimiter, async (req, res) => {
   try {
     const activeOnly = req.query.activeOnly === "true";
-    
-    // Get providers from database
     const dbProviders = await providerRepository.findAll(activeOnly);
     
     const formattedProviders = dbProviders.map(p => ({
@@ -221,7 +238,7 @@ router.get("/", discoveryLimiter, async (req, res) => {
 
 /**
  * GET /api/v1/providers/:address
- * Get provider information
+ * Get provider information from blockchain
  */
 router.get("/:address", generalLimiter, async (req, res) => {
   try {
@@ -251,7 +268,7 @@ router.get("/:address", generalLimiter, async (req, res) => {
 
 /**
  * GET /api/v1/providers/:address/active
- * Check if provider is active
+ * Check if provider is active from blockchain
  */
 router.get("/:address/active", generalLimiter, async (req, res) => {
   try {
@@ -271,7 +288,7 @@ router.get("/:address/active", generalLimiter, async (req, res) => {
 
 /**
  * GET /api/v1/providers/:address/price
- * Get provider's price per second
+ * Get provider's price per second from blockchain
  */
 router.get("/:address/price", generalLimiter, async (req, res) => {
   try {
@@ -282,6 +299,7 @@ router.get("/:address/price", generalLimiter, async (req, res) => {
       success: true,
       address,
       pricePerSecond,
+      pricePerSecondMOVE: pricePerSecond / 100000000,
     });
   } catch (error: any) {
     if (error.message.includes("not found")) {
@@ -293,97 +311,56 @@ router.get("/:address/price", generalLimiter, async (req, res) => {
 });
 
 /**
- * PATCH /api/v1/providers/:address/availability
- * Update provider availability
- * 
- * Body:
- * {
- *   "privateKey": "hex_private_key",
- *   "isActive": true
- * }
+ * GET /api/v1/providers/:address/stats
+ * Get provider statistics from database
  */
-router.patch("/:address/availability", strictLimiter, async (req, res) => {
+router.get("/:address/stats", generalLimiter, async (req, res) => {
   try {
     const { address } = req.params;
-    const { privateKey, isActive } = req.body;
+    const stats = await providerRepository.getStats(address);
 
-    if (!privateKey || isActive === undefined) {
-      return res.status(400).json({
-        error: "Missing required fields",
-        required: ["privateKey", "isActive"],
-      });
+    if (!stats) {
+      return res.status(404).json({ error: "Provider not found" });
     }
-
-    // Verify the address matches the private key
-    const account = blockchainService.createAccountFromPrivateKey(privateKey);
-    if (account.accountAddress.toString() !== address) {
-      return res.status(403).json({ error: "Address does not match private key" });
-    }
-
-    const txnHash = await providerService.updateAvailability(account, isActive);
-
-    // Update database
-    await providerRepository.updateAvailability(address, isActive);
 
     res.json({
       success: true,
-      transactionHash: txnHash,
       address,
-      isActive,
+      stats,
     });
   } catch (error: any) {
-    console.error("Update availability error:", error);
-    res.status(500).json({ error: error.message || "Failed to update availability" });
+    console.error("Get provider stats error:", error);
+    res.status(500).json({ error: error.message || "Failed to get provider stats" });
   }
 });
 
 /**
- * PATCH /api/v1/providers/:address/pricing
- * Update provider pricing
- * 
- * Body:
- * {
- *   "privateKey": "hex_private_key",
- *   "pricePerSecond": 2000000
- * }
+ * GET /api/v1/providers/search/:gpuType
+ * Search providers by GPU type from database
  */
-router.patch("/:address/pricing", strictLimiter, async (req, res) => {
+router.get("/search/:gpuType", discoveryLimiter, async (req, res) => {
   try {
-    const { address } = req.params;
-    const { privateKey, pricePerSecond } = req.body;
-
-    if (!privateKey || !pricePerSecond) {
-      return res.status(400).json({
-        error: "Missing required fields",
-        required: ["privateKey", "pricePerSecond"],
-      });
-    }
-
-    // Verify the address matches the private key
-    const account = blockchainService.createAccountFromPrivateKey(privateKey);
-    if (account.accountAddress.toString() !== address) {
-      return res.status(403).json({ error: "Address does not match private key" });
-    }
-
-    const txnHash = await providerService.updatePricing(
-      account,
-      Number(pricePerSecond)
-    );
-
-    // Update database
-    await providerRepository.updatePricing(address, BigInt(pricePerSecond));
+    const { gpuType } = req.params;
+    const providers = await providerRepository.searchByGpuType(gpuType);
 
     res.json({
       success: true,
-      transactionHash: txnHash,
-      address,
-      pricePerSecond: Number(pricePerSecond),
+      searchTerm: gpuType,
+      count: providers.length,
+      providers: providers.map(p => ({
+        address: p.address,
+        gpuType: p.gpu_type,
+        vramGB: p.vram_gb,
+        pricePerSecond: Number(p.price_per_second),
+        pricePerSecondMOVE: Number(p.price_per_second) / 100000000,
+        isActive: p.is_active,
+        reputationScore: p.reputation_score,
+      })),
     });
   } catch (error: any) {
-    console.error("Update pricing error:", error);
-    res.status(500).json({ error: error.message || "Failed to update pricing" });
+    console.error("Search providers error:", error);
+    res.status(500).json({ error: error.message || "Failed to search providers" });
   }
 });
 
 export default router;
-

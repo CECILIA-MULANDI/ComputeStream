@@ -1,11 +1,20 @@
 import { BrowserRouter as Router, Routes, Route, Link } from 'react-router-dom';
+import { useEffect } from 'react';
 import { ProviderList } from './pages/ProviderList';
 import { ProviderRegister } from './pages/ProviderRegister';
 import { JobCreate } from './pages/JobCreate';
 import { JobDetail } from './pages/JobDetail';
+import { JobList } from './pages/JobList';
 import { Dashboard } from './pages/Dashboard';
-
+import { WalletConnect } from './components/WalletConnect';
+import { restoreWalletConnection } from './services/walletIntegration';
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                              
 function App() {
+  // Restore wallet connection on app load
+  useEffect(() => {
+    restoreWalletConnection();
+  }, []);
+
   return (
     <Router>
       <div className="min-h-screen bg-gradient-to-br from-slate-50 to-slate-100">
@@ -36,12 +45,21 @@ function App() {
                     Register Provider
                   </Link>
                   <Link
+                    to="/jobs"
+                    className="border-transparent text-gray-500 hover:border-gray-300 hover:text-gray-700 inline-flex items-center px-1 pt-1 border-b-2 text-sm font-medium"
+                  >
+                    My Jobs
+                  </Link>
+                  <Link
                     to="/jobs/create"
                     className="border-transparent text-gray-500 hover:border-gray-300 hover:text-gray-700 inline-flex items-center px-1 pt-1 border-b-2 text-sm font-medium"
                   >
                     Create Job
                   </Link>
                 </div>
+              </div>
+              <div className="flex items-center">
+                <WalletConnect />
               </div>
             </div>
           </div>
@@ -52,6 +70,7 @@ function App() {
             <Route path="/" element={<Dashboard />} />
             <Route path="/providers" element={<ProviderList />} />
             <Route path="/providers/register" element={<ProviderRegister />} />
+            <Route path="/jobs" element={<JobList />} />
             <Route path="/jobs/create" element={<JobCreate />} />
             <Route path="/jobs/:buyerAddress/:jobId" element={<JobDetail />} />
           </Routes>

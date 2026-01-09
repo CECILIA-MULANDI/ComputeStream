@@ -2,6 +2,7 @@
 import express from "express";
 import { EscrowService } from "../services/escrow.service.js";
 import { BlockchainService } from "../services/blockchain.service.js";
+import { escrowRepository } from "../../database/repositories/escrow.repository.js";
 import { 
   strictLimiter, 
   generalLimiter 
@@ -14,58 +15,154 @@ const blockchainService = new BlockchainService();
 const escrowService = new EscrowService(blockchainService);
 
 /**
- * POST /api/v1/escrow/deposit
- * Deposit escrow for a job - locks coins
+ * POST /api/v1/escrow/sync
+ * Sync escrow deposit to database after wallet-based transaction
+ * Called by frontend after successful on-chain escrow deposit via wallet
  * 
  * Body:
  * {
- *   "privateKey": "hex_private_key",
- *   "jobId": 0,
+ *   "txHash": "0x...",
+ *   "jobId": 42,
+ *   "buyerAddress": "0x...",
  *   "providerAddress": "0x...",
  *   "amount": 1000000000
  * }
  */
-router.post("/deposit", strictLimiter, async (req, res) => {
+router.post("/sync", strictLimiter, async (req, res) => {
   try {
-    const { privateKey, jobId, providerAddress, amount } = req.body;
+    const { txHash, jobId, buyerAddress, providerAddress, amount } = req.body;
 
     // Validate required fields
-    if (!privateKey || jobId === undefined || !providerAddress || !amount) {
+    if (jobId === undefined || !buyerAddress || !providerAddress || !amount) {
       return res.status(400).json({
         error: "Missing required fields",
-        required: ["privateKey", "jobId", "providerAddress", "amount"],
+        required: ["jobId", "buyerAddress", "providerAddress", "amount"],
       });
     }
 
-    // Create account from private key
-    const buyer = blockchainService.createAccountFromPrivateKey(privateKey);
+    const amountBigInt = BigInt(amount);
 
-    // Deposit escrow
-    const txnHash = await escrowService.depositEscrow(buyer, {
-      jobId: Number(jobId),
-      providerAddress,
-      amount: Number(amount),
+    // Save to database
+    await escrowRepository.upsert({
+      job_id: Number(jobId),
+      buyer_address: buyerAddress,
+      provider_address: providerAddress,
+      total_amount: amountBigInt,
+      released_amount: 0n,
+      remaining_amount: amountBigInt,
+      is_active: true,
+      transaction_hash: txHash,
     });
+
+    console.log(`✅ Escrow for job ${jobId} synced to database (tx: ${txHash || 'N/A'})`);
 
     res.json({
       success: true,
-      transactionHash: txnHash,
-      buyerAddress: buyer.accountAddress.toString(),
       jobId: Number(jobId),
-      amount: Number(amount),
-      message: "Escrow deposited successfully",
+      buyerAddress,
+      amount: amount.toString(),
+      txHash,
+      message: "Escrow synced to database successfully",
     });
   } catch (error: any) {
-    console.error("Deposit escrow error:", error);
+    console.error("Escrow sync error:", error);
     res.status(500).json({
-      error: error.message || "Failed to deposit escrow",
+      error: error.message || "Failed to sync escrow",
+    });
+  }
+});
+
+/**
+ * POST /api/v1/escrow/sync/release
+ * Sync escrow payment release to database after wallet-based transaction
+ * 
+ * Body:
+ * {
+ *   "txHash": "0x...",
+ *   "jobId": 42,
+ *   "amount": 1000000
+ * }
+ */
+router.post("/sync/release", strictLimiter, async (req, res) => {
+  try {
+    const { txHash, jobId, amount } = req.body;
+
+    if (jobId === undefined || !amount) {
+      return res.status(400).json({
+        error: "Missing required fields",
+        required: ["jobId", "amount"],
+      });
+    }
+
+    // Update database
+    await escrowRepository.releasePayment(Number(jobId), BigInt(amount));
+
+    console.log(`✅ Escrow release for job ${jobId} synced: ${amount} (tx: ${txHash || 'N/A'})`);
+
+    res.json({
+      success: true,
+      jobId: Number(jobId),
+      amount: amount.toString(),
+      txHash,
+      message: "Escrow release synced successfully",
+    });
+  } catch (error: any) {
+    console.error("Escrow release sync error:", error);
+    res.status(500).json({
+      error: error.message || "Failed to sync escrow release",
+    });
+  }
+});
+
+/**
+ * POST /api/v1/escrow/sync/close
+ * Sync escrow closure to database after wallet-based transaction
+ * 
+ * Body:
+ * {
+ *   "txHash": "0x...",
+ *   "jobId": 42,
+ *   "refunded": true  // true if refunded, false if closed normally
+ * }
+ */
+router.post("/sync/close", strictLimiter, async (req, res) => {
+  try {
+    const { txHash, jobId, refunded } = req.body;
+
+    if (jobId === undefined) {
+      return res.status(400).json({
+        error: "Missing required fields",
+        required: ["jobId"],
+      });
+    }
+
+    // Update database
+    if (refunded) {
+      await escrowRepository.refundEscrow(Number(jobId));
+    } else {
+      await escrowRepository.closeEscrow(Number(jobId));
+    }
+
+    console.log(`✅ Escrow for job ${jobId} closed (refunded: ${refunded}) (tx: ${txHash || 'N/A'})`);
+
+    res.json({
+      success: true,
+      jobId: Number(jobId),
+      refunded: !!refunded,
+      txHash,
+      message: "Escrow closure synced successfully",
+    });
+  } catch (error: any) {
+    console.error("Escrow close sync error:", error);
+    res.status(500).json({
+      error: error.message || "Failed to sync escrow closure",
     });
   }
 });
 
 /**
  * GET /api/v1/escrow/:buyerAddress/:jobId
- * Get escrow information
+ * Get escrow information from blockchain
  */
 router.get("/:buyerAddress/:jobId", generalLimiter, async (req, res) => {
   try {
@@ -95,7 +192,7 @@ router.get("/:buyerAddress/:jobId", generalLimiter, async (req, res) => {
 
 /**
  * GET /api/v1/escrow/:buyerAddress/:jobId/balance
- * Get remaining balance in escrow
+ * Get remaining balance in escrow from blockchain
  */
 router.get("/:buyerAddress/:jobId/balance", generalLimiter, async (req, res) => {
   try {
@@ -120,7 +217,7 @@ router.get("/:buyerAddress/:jobId/balance", generalLimiter, async (req, res) => 
 
 /**
  * GET /api/v1/escrow/:buyerAddress/:jobId/released
- * Get released amount from escrow
+ * Get released amount from escrow from blockchain
  */
 router.get("/:buyerAddress/:jobId/released", generalLimiter, async (req, res) => {
   try {
@@ -145,7 +242,7 @@ router.get("/:buyerAddress/:jobId/released", generalLimiter, async (req, res) =>
 
 /**
  * GET /api/v1/escrow/:buyerAddress/:jobId/active
- * Check if escrow is active
+ * Check if escrow is active from blockchain
  */
 router.get("/:buyerAddress/:jobId/active", generalLimiter, async (req, res) => {
   try {
@@ -165,127 +262,41 @@ router.get("/:buyerAddress/:jobId/active", generalLimiter, async (req, res) => {
 });
 
 /**
- * POST /api/v1/escrow/:buyerAddress/:jobId/release
- * Release payment to provider
- * 
- * Body:
- * {
- *   "privateKey": "hex_private_key",
- *   "amount": 1000000
- * }
+ * GET /api/v1/escrow/db/active
+ * Get active escrows from database
  */
-router.post("/:buyerAddress/:jobId/release", strictLimiter, async (req, res) => {
+router.get("/db/active", generalLimiter, async (_req, res) => {
   try {
-    const { buyerAddress, jobId } = req.params;
-    const { privateKey, amount } = req.body;
-
-    if (!privateKey || !amount) {
-      return res.status(400).json({
-        error: "Missing required fields",
-        required: ["privateKey", "amount"],
-      });
-    }
-
-    // Verify the address matches the private key
-    const buyer = blockchainService.createAccountFromPrivateKey(privateKey);
-    if (buyer.accountAddress.toString() !== buyerAddress) {
-      return res.status(403).json({ error: "Address does not match private key" });
-    }
-
-    const txnHash = await escrowService.releasePayment(
-      buyer,
-      Number(jobId),
-      Number(amount)
-    );
-
+    const escrows = await escrowRepository.findActive();
     res.json({
       success: true,
-      transactionHash: txnHash,
-      buyerAddress,
-      jobId: Number(jobId),
-      amount: Number(amount),
+      count: escrows.length,
+      escrows,
     });
   } catch (error: any) {
-    console.error("Release payment error:", error);
-    res.status(500).json({ error: error.message || "Failed to release payment" });
+    console.error("Get active escrows error:", error);
+    res.status(500).json({ error: error.message || "Failed to get active escrows" });
   }
 });
 
 /**
- * POST /api/v1/escrow/:buyerAddress/:jobId/refund
- * Refund remaining escrow to buyer (for cancelled/failed jobs)
- * 
- * Body:
- * {
- *   "privateKey": "hex_private_key"
- * }
+ * GET /api/v1/escrow/db/buyer/:buyerAddress
+ * Get escrows for a buyer from database
  */
-router.post("/:buyerAddress/:jobId/refund", strictLimiter, async (req, res) => {
+router.get("/db/buyer/:buyerAddress", generalLimiter, async (req, res) => {
   try {
-    const { buyerAddress, jobId } = req.params;
-    const { privateKey } = req.body;
-
-    if (!privateKey) {
-      return res.status(400).json({ error: "Private key is required" });
-    }
-
-    // Verify the address matches the private key
-    const buyer = blockchainService.createAccountFromPrivateKey(privateKey);
-    if (buyer.accountAddress.toString() !== buyerAddress) {
-      return res.status(403).json({ error: "Address does not match private key" });
-    }
-
-    const txnHash = await escrowService.refundEscrow(buyer, Number(jobId));
-
+    const { buyerAddress } = req.params;
+    const escrows = await escrowRepository.findByBuyer(buyerAddress);
     res.json({
       success: true,
-      transactionHash: txnHash,
       buyerAddress,
-      jobId: Number(jobId),
+      count: escrows.length,
+      escrows,
     });
   } catch (error: any) {
-    console.error("Refund escrow error:", error);
-    res.status(500).json({ error: error.message || "Failed to refund escrow" });
-  }
-});
-
-/**
- * POST /api/v1/escrow/:buyerAddress/:jobId/close
- * Close escrow and return any remaining funds (after job completion)
- * 
- * Body:
- * {
- *   "privateKey": "hex_private_key"
- * }
- */
-router.post("/:buyerAddress/:jobId/close", strictLimiter, async (req, res) => {
-  try {
-    const { buyerAddress, jobId } = req.params;
-    const { privateKey } = req.body;
-
-    if (!privateKey) {
-      return res.status(400).json({ error: "Private key is required" });
-    }
-
-    // Verify the address matches the private key
-    const buyer = blockchainService.createAccountFromPrivateKey(privateKey);
-    if (buyer.accountAddress.toString() !== buyerAddress) {
-      return res.status(403).json({ error: "Address does not match private key" });
-    }
-
-    const txnHash = await escrowService.closeEscrow(buyer, Number(jobId));
-
-    res.json({
-      success: true,
-      transactionHash: txnHash,
-      buyerAddress,
-      jobId: Number(jobId),
-    });
-  } catch (error: any) {
-    console.error("Close escrow error:", error);
-    res.status(500).json({ error: error.message || "Failed to close escrow" });
+    console.error("Get buyer escrows error:", error);
+    res.status(500).json({ error: error.message || "Failed to get buyer escrows" });
   }
 });
 
 export default router;
-

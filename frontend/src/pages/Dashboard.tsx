@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { providerApi, jobApi } from '../api';
+import { providerApi } from '../api';
 import type { Provider } from '../types';
 
 export function Dashboard() {

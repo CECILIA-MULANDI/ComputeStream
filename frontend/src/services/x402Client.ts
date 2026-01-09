@@ -80,19 +80,31 @@ export async function x402Request(
       const paymentInfo = parseX402V1PaymentRequest(response.headers as any);
       console.log('Payment info from headers:', paymentInfo);
       
-      // Get amount from response body (x402plus puts it there)
-      let amount = '5000000000'; // Default 50 MOVE
+      // Parse payment details from response body (our custom x402 middleware format)
+      let amount = '100000000'; // Default 1 MOVE fallback
       let description = 'Compute job payment';
       let payTo = '0x69fa4604bbf4e835e978b4d7ef1cfe365f589291428a9d6332b6cd9f4e5e8ff1';
       
-      // Try to parse from response body (x402plus format)
+      // Try to parse from response body
       if (response.data) {
-        // x402plus format
+        // Our custom dynamic pricing format (from x402-compute.middleware.ts)
         if (response.data.maxAmountRequired) amount = String(response.data.maxAmountRequired);
         if (response.data.description) description = response.data.description;
         if (response.data.payTo) payTo = response.data.payTo;
         
-        // Nested paymentRequirements format
+        // Log price breakdown for transparency
+        if (response.data.priceBreakdown) {
+          const breakdown = response.data.priceBreakdown;
+          console.log('💰 Price breakdown:', {
+            provider: breakdown.provider,
+            gpuType: breakdown.gpuType,
+            pricePerSecond: breakdown.pricePerSecond,
+            duration: breakdown.duration,
+            totalMove: breakdown.totalMove,
+          });
+        }
+        
+        // x402plus format (fallback)
         if (response.data.paymentRequirements) {
           const reqs = response.data.paymentRequirements;
           if (reqs.maxAmountRequired) amount = String(reqs.maxAmountRequired);
@@ -100,7 +112,7 @@ export async function x402Request(
           if (reqs.payTo) payTo = reqs.payTo;
         }
         
-        // x402 v1 accepts array format
+        // x402 v1 accepts array format (fallback)
         if (response.data.accepts && Array.isArray(response.data.accepts) && response.data.accepts.length > 0) {
           const accept = response.data.accepts[0];
           if (accept.maxAmountRequired) amount = String(accept.maxAmountRequired);
@@ -122,8 +134,11 @@ export async function x402Request(
         throw new Error('Wallet not connected. Please connect your Movement wallet first.');
       }
       
-      // Calculate amount in MOVE for display
-      const amountInMove = (parseInt(amount) / 100000000).toFixed(2);
+      // Calculate amount in MOVE for display (show up to 6 decimal places for small amounts)
+      const amountNumeric = parseInt(amount) / 100000000;
+      const amountInMove = amountNumeric < 0.01 
+        ? amountNumeric.toFixed(6).replace(/\.?0+$/, '') // Remove trailing zeros
+        : amountNumeric.toFixed(4);
       
       // Confirm payment with user
       const confirmPayment = window.confirm(
@@ -148,8 +163,19 @@ export async function x402Request(
       
       console.log('✅ Payment transaction submitted:', txHash);
       
+      // Wait for transaction to be indexed on-chain before retrying
+      // Movement RPC can be slow, so wait longer
+      console.log('⏳ Waiting for transaction to be indexed...');
+      await new Promise(resolve => setTimeout(resolve, 5000)); // 5 second delay
+      
       // Retry request with payment proof
       console.log('🔄 Retrying request with payment proof...');
+      console.log('   Headers being sent:', {
+        'X-Payment-Proof': txHash,
+        'X-Payment': txHash,
+        'Payment': txHash,
+      });
+      
       const retryResponse = await axios({
         url: fullUrl,
         method: options.method || 'GET',
@@ -161,7 +187,15 @@ export async function x402Request(
           'Payment': txHash,
           ...options.headers,
         },
+        validateStatus: (status) => status < 500, // Don't throw on 402 for debugging
       });
+      
+      if (retryResponse.status === 402) {
+        // Payment verification failed - log details
+        console.error('❌ Payment verification failed on server');
+        console.error('   Server response:', retryResponse.data);
+        throw new Error(retryResponse.data?.message || retryResponse.data?.error || 'Payment verification failed');
+      }
       
       console.log('✅ Request successful after payment!');
       return retryResponse.data;

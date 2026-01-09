@@ -5,7 +5,7 @@ import "dotenv/config";
 import providerRoutes from "./routes/providers.routes.js";
 import jobRoutes from "./routes/jobs.routes.js";
 import escrowRoutes from "./routes/escrow.routes.js";
-import paymentStreamRoutes, { paymentOrchestrator } from "./routes/payment-stream.routes.js";
+import paymentStreamRoutes from "./routes/payment-stream.routes.js";
 import x402ComputeRoutes from "./routes/x402-compute.routes.js";
 import { generalLimiter } from "./middleware/rate-limiter.middleware.js";
 import { indexerService } from "./services/indexer.service.js";
@@ -39,9 +39,8 @@ app.use(cors({
 // Global rate limiting for production
 app.use(generalLimiter);
 
-// x402 Paywall - Novel use: Compute resource access via x402
-// This enables AI agents to pay for GPU compute on-demand using x402 payment rails
-// Using x402plus for simpler Movement Network integration
+// x402 Paywall for static-priced endpoints only
+// Compute routes use dynamic pricing middleware (see x402-compute.routes.ts)
 app.use(
   x402Paywall(
     process.env.MOVEMENT_PAY_TO as string,
@@ -49,27 +48,13 @@ app.use(
       "GET /api/premium-content": {
         network: "movement",
         asset: "0x1::aptos_coin::AptosCoin",
-        maxAmountRequired: "100000000",
+        maxAmountRequired: "100000000", // 1 MOVE
         description: "Premium workshop content",
         mimeType: "application/json",
         maxTimeoutSeconds: 600
-      },
-      "GET /api/v1/compute/access/:providerAddress": {
-        network: "movement",
-        asset: "0x1::aptos_coin::AptosCoin",
-        maxAmountRequired: "1000000000",
-        description: "GPU compute resource access",
-        mimeType: "application/json",
-        maxTimeoutSeconds: 300
-      },
-      "POST /api/v1/compute/execute": {
-        network: "movement",
-        asset: "0x1::aptos_coin::AptosCoin",
-        maxAmountRequired: "5000000000",
-        description: "Execute compute job - x402 payment",
-        mimeType: "application/json",
-        maxTimeoutSeconds: 600
       }
+      // NOTE: Compute routes removed - they use dynamic pricing based on provider rates
+      // See x402-compute.routes.ts for implementation
     },
     {
       url: "https://facilitator.stableyard.fi"
@@ -105,12 +90,13 @@ app.get("/", (_req, res) => {
   res.json({
     message: "ComputeStream API",
     version: "1.0.0",
+    security: "Server NEVER handles private keys - all transactions signed via wallet",
     endpoints: {
       providers: "/api/v1/providers",
       jobs: "/api/v1/jobs",
       escrow: "/api/v1/escrow",
       paymentStreams: "/api/v1/payments/stream",
-      x402Compute: "/api/v1/compute", // Novel x402 use case
+      x402Compute: "/api/v1/compute",
       health: "/health",
     },
   });
@@ -118,6 +104,7 @@ app.get("/", (_req, res) => {
 
 app.listen(PORT, async () => {
   console.log(`🚀 ComputeStream API running at http://localhost:${PORT}`);
+  console.log(`🔐 Security: Server NEVER handles private keys`);
   console.log(`📡 Movement RPC: ${process.env.MOVEMENT_RPC_URL || "NOT SET"}`);
   console.log(`📝 Contract: 0x69fa4604bbf4e835e978b4d7ef1cfe365f589291428a9d6332b6cd9f4e5e8ff1`);
   console.log(`💰 Pay-to address: ${process.env.MOVEMENT_PAY_TO || "NOT SET"}`);
@@ -135,23 +122,17 @@ app.listen(PORT, async () => {
   } else {
     console.warn(`⚠️  Database not connected - running without persistence`);
   }
-  
-  // Start payment stream orchestrator
-  paymentOrchestrator.start();
-  console.log(`💸 Payment stream orchestrator started`);
 });
 
 // Graceful shutdown
 process.on("SIGINT", () => {
   console.log("\n🛑 Shutting down gracefully...");
-  paymentOrchestrator.stop();
   indexerService.stop();
   process.exit(0);
 });
 
 process.on("SIGTERM", () => {
   console.log("\n🛑 Shutting down gracefully...");
-  paymentOrchestrator.stop();
   indexerService.stop();
   process.exit(0);
 });

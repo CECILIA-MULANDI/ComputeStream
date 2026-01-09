@@ -72,6 +72,11 @@ export const jobApi = {
     const response = await api.get(`/jobs/${buyerAddress}/${jobId}/status`);
     return response.data;
   },
+  
+  listByBuyer: async (buyerAddress: string): Promise<Job[]> => {
+    const response = await api.get(`/jobs/db/buyer/${buyerAddress}`);
+    return response.data.jobs || [];
+  },
 };
 
 // Escrow

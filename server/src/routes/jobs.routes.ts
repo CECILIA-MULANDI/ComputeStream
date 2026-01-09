@@ -1,10 +1,10 @@
 
 import express from "express";
-import { JobService, JobStatus } from "../services/job.service.js";
+import { JobService } from "../services/job.service.js";
 import { BlockchainService } from "../services/blockchain.service.js";
+import { jobRepository } from "../../database/repositories/job.repository.js";
 import { 
   strictLimiter, 
-  discoveryLimiter,
   generalLimiter 
 } from "../middleware/rate-limiter.middleware.js";
 
@@ -15,59 +15,197 @@ const blockchainService = new BlockchainService();
 const jobService = new JobService(blockchainService);
 
 /**
- * POST /api/v1/jobs/create
- * Create a new job
+ * POST /api/v1/jobs/sync
+ * Sync a job to the database after wallet-based creation
+ * Called by frontend after successful on-chain job creation via wallet
  * 
  * Body:
  * {
- *   "privateKey": "hex_private_key",
+ *   "txHash": "0x...",
+ *   "jobId": 42,
+ *   "buyerAddress": "0x...",
  *   "providerAddress": "0x...",
  *   "dockerImage": "my-image:latest",
  *   "escrowAmount": 1000000000,
  *   "maxDuration": 3600
  * }
  */
-router.post("/create", strictLimiter, async (req, res) => {
+router.post("/sync", strictLimiter, async (req, res) => {
   try {
-    const { privateKey, providerAddress, dockerImage, escrowAmount, maxDuration } = req.body;
+    const { txHash, jobId, buyerAddress, providerAddress, dockerImage, escrowAmount, maxDuration } = req.body;
 
-    // Validate required fields
-    if (!privateKey || !providerAddress || !dockerImage || !escrowAmount || !maxDuration) {
+    // Validate required fields (jobId is optional - we'll try to extract it)
+    if (!buyerAddress || !providerAddress || !dockerImage || !txHash) {
       return res.status(400).json({
         error: "Missing required fields",
-        required: ["privateKey", "providerAddress", "dockerImage", "escrowAmount", "maxDuration"],
+        required: ["txHash", "buyerAddress", "providerAddress", "dockerImage"],
+        optional: ["jobId"], // Will be extracted from blockchain if not provided
       });
     }
+    
+    // If jobId not provided, try to extract it from the blockchain
+    let finalJobId = jobId;
+    if (!finalJobId && txHash) {
+      console.log(`⚠️  No jobId provided, attempting to extract from blockchain...`);
+      
+      try {
+        // Wait a moment for transaction to be indexed
+        await new Promise(resolve => setTimeout(resolve, 2000));
+        
+        // Try to get the job counter from blockchain
+        // The jobId will be the counter value at the time of creation
+        // Since the counter increments after job creation, we need to check recent jobs
+        
+        // Get current job counter
+        const currentCounter = await jobService.getJobCounter();
+        console.log(`Current job counter: ${currentCounter}`);
+        
+        // The jobId should be currentCounter - 1 (since counter increments after creation)
+        // But we need to verify by checking if a job with that ID exists for this buyer
+        let foundJobId = null;
+        
+        // Try checking a range around the current counter
+        for (let checkId = currentCounter; checkId >= Math.max(0, currentCounter - 10); checkId--) {
+          try {
+            const job = await jobService.getJob(buyerAddress, checkId);
+            if (job && job.buyerAddress.toLowerCase() === buyerAddress.toLowerCase()) {
+              // Verify it matches our transaction
+              // We can't easily verify txHash from the job data, but if buyer and provider match, it's likely correct
+              if (job.providerAddress.toLowerCase() === providerAddress.toLowerCase()) {
+                foundJobId = checkId;
+                console.log(`✅ Found matching job with ID: ${foundJobId}`);
+                break;
+              }
+            }
+          } catch (e) {
+            // Job doesn't exist with this ID, continue searching
+            continue;
+          }
+        }
+        
+        if (foundJobId !== null) {
+          finalJobId = foundJobId;
+        } else {
+          // If we can't find it, use currentCounter - 1 as a best guess
+          // (counter increments after job creation, so the new job should be counter - 1)
+          finalJobId = Math.max(0, currentCounter - 1);
+          console.log(`⚠️  Could not verify jobId, using estimated ID: ${finalJobId}`);
+        }
+      } catch (error: any) {
+        console.error(`Failed to extract jobId from blockchain:`, error.message);
+        // If extraction fails, we'll still try to save with a placeholder
+        // The user can manually update it later, or an indexer can fix it
+        console.log(`⚠️  Will attempt to save job without verified jobId`);
+      }
+    }
 
-    // Create account from private key
-    const buyer = blockchainService.createAccountFromPrivateKey(privateKey);
-
-    // Create job
-    const { hash: txnHash, jobId } = await jobService.createJob(buyer, {
-      providerAddress,
-      dockerImage,
-      escrowAmount: Number(escrowAmount),
-      maxDuration: Number(maxDuration),
-    });
+    // Save to database
+    // Normalize addresses to lowercase for consistent storage and retrieval
+    const normalizedBuyerAddress = buyerAddress.toLowerCase();
+    const normalizedProviderAddress = providerAddress.toLowerCase();
+    
+    if (finalJobId !== null && finalJobId !== undefined) {
+      try {
+        await jobRepository.upsert({
+          job_id: Number(finalJobId),
+          buyer_address: normalizedBuyerAddress,
+          provider_address: normalizedProviderAddress,
+          docker_image: dockerImage,
+          status: 'pending',
+          escrow_amount: BigInt(escrowAmount || 0),
+          max_duration: Number(maxDuration || 0),
+          transaction_hash: txHash,
+        });
+        console.log(`✅ Job ${finalJobId} synced to database (tx: ${txHash})`);
+        console.log(`   Buyer: ${normalizedBuyerAddress}, Provider: ${normalizedProviderAddress}`);
+      } catch (dbError: any) {
+        // If there's a conflict (job already exists), that's okay
+        if (dbError.message?.includes('duplicate') || dbError.message?.includes('unique')) {
+          console.log(`ℹ️  Job ${finalJobId} already exists in database, skipping insert`);
+        } else {
+          throw dbError;
+        }
+      }
+    } else {
+      console.log(`⚠️  Could not determine jobId, job not saved to database. Transaction: ${txHash}`);
+      console.log(`   Please manually sync this job once the jobId is known, or wait for indexer.`);
+    }
 
     res.json({
       success: true,
-      transactionHash: txnHash,
-      buyerAddress: buyer.accountAddress.toString(),
-      jobId,
-      message: "Job created successfully",
+      jobId: finalJobId ? Number(finalJobId) : null,
+      buyerAddress,
+      txHash,
+      message: finalJobId 
+        ? "Job synced to database successfully" 
+        : "Could not determine jobId. The job may need to be synced manually once the jobId is available.",
     });
   } catch (error: any) {
-    console.error("Create job error:", error);
+    console.error("Job sync error:", error);
     res.status(500).json({
-      error: error.message || "Failed to create job",
+      error: error.message || "Failed to sync job",
+    });
+  }
+});
+
+/**
+ * POST /api/v1/jobs/sync/status
+ * Sync job status update to database after wallet-based transaction
+ * 
+ * Body:
+ * {
+ *   "txHash": "0x...",
+ *   "jobId": 42,
+ *   "status": "running" | "completed" | "failed" | "cancelled",
+ *   "startTime": 1234567890,
+ *   "endTime": 1234567890,
+ *   "outputUrl": "https://..."
+ * }
+ */
+router.post("/sync/status", strictLimiter, async (req, res) => {
+  try {
+    const { txHash, jobId, status, startTime, endTime, outputUrl } = req.body;
+
+    if (jobId === undefined || !status) {
+      return res.status(400).json({
+        error: "Missing required fields",
+        required: ["jobId", "status"],
+      });
+    }
+
+    // Update database based on status
+    if (status === 'running' && startTime) {
+      await jobRepository.startJob(Number(jobId), Number(startTime));
+    } else if (status === 'completed' && endTime) {
+      await jobRepository.completeJob(Number(jobId), Number(endTime), outputUrl);
+    } else if (status === 'failed' && endTime) {
+      await jobRepository.failJob(Number(jobId), Number(endTime));
+    } else if (status === 'cancelled') {
+      await jobRepository.cancelJob(Number(jobId));
+    } else {
+      await jobRepository.updateStatus(Number(jobId), status);
+    }
+
+    console.log(`✅ Job ${jobId} status synced: ${status} (tx: ${txHash || 'N/A'})`);
+
+    res.json({
+      success: true,
+      jobId: Number(jobId),
+      status,
+      txHash,
+      message: "Job status synced successfully",
+    });
+  } catch (error: any) {
+    console.error("Job status sync error:", error);
+    res.status(500).json({
+      error: error.message || "Failed to sync job status",
     });
   }
 });
 
 /**
  * GET /api/v1/jobs/:buyerAddress/:jobId
- * Get job information
+ * Get job information from blockchain
  */
 router.get("/:buyerAddress/:jobId", generalLimiter, async (req, res) => {
   try {
@@ -97,7 +235,7 @@ router.get("/:buyerAddress/:jobId", generalLimiter, async (req, res) => {
 
 /**
  * GET /api/v1/jobs/:buyerAddress/:jobId/status
- * Get job status
+ * Get job status from blockchain
  */
 router.get("/:buyerAddress/:jobId/status", generalLimiter, async (req, res) => {
   try {
@@ -121,176 +259,8 @@ router.get("/:buyerAddress/:jobId/status", generalLimiter, async (req, res) => {
 });
 
 /**
- * POST /api/v1/jobs/:buyerAddress/:jobId/start
- * Start a job (provider only)
- * 
- * Body:
- * {
- *   "privateKey": "provider_private_key"
- * }
- */
-router.post("/:buyerAddress/:jobId/start", strictLimiter, async (req, res) => {
-  try {
-    const { buyerAddress, jobId } = req.params;
-    const { privateKey } = req.body;
-
-    if (!privateKey) {
-      return res.status(400).json({ error: "Private key is required" });
-    }
-
-    const provider = blockchainService.createAccountFromPrivateKey(privateKey);
-    const startTime = Math.floor(Date.now() / 1000);
-
-    const txnHash = await jobService.startJob(
-      provider,
-      buyerAddress,
-      Number(jobId),
-      startTime
-    );
-
-    res.json({
-      success: true,
-      transactionHash: txnHash,
-      buyerAddress,
-      jobId: Number(jobId),
-      startTime,
-    });
-  } catch (error: any) {
-    console.error("Start job error:", error);
-    res.status(500).json({ error: error.message || "Failed to start job" });
-  }
-});
-
-/**
- * POST /api/v1/jobs/:buyerAddress/:jobId/complete
- * Complete a job (provider only)
- * 
- * Body:
- * {
- *   "privateKey": "provider_private_key",
- *   "outputUrl": "https://..."
- * }
- */
-router.post("/:buyerAddress/:jobId/complete", strictLimiter, async (req, res) => {
-  try {
-    const { buyerAddress, jobId } = req.params;
-    const { privateKey, outputUrl } = req.body;
-
-    if (!privateKey || !outputUrl) {
-      return res.status(400).json({
-        error: "Missing required fields",
-        required: ["privateKey", "outputUrl"],
-      });
-    }
-
-    const provider = blockchainService.createAccountFromPrivateKey(privateKey);
-    const endTime = Math.floor(Date.now() / 1000);
-
-    const txnHash = await jobService.completeJob(
-      provider,
-      buyerAddress,
-      Number(jobId),
-      outputUrl,
-      endTime
-    );
-
-    res.json({
-      success: true,
-      transactionHash: txnHash,
-      buyerAddress,
-      jobId: Number(jobId),
-      outputUrl,
-      endTime,
-    });
-  } catch (error: any) {
-    console.error("Complete job error:", error);
-    res.status(500).json({ error: error.message || "Failed to complete job" });
-  }
-});
-
-/**
- * POST /api/v1/jobs/:buyerAddress/:jobId/fail
- * Fail a job (buyer or provider)
- * 
- * Body:
- * {
- *   "privateKey": "private_key"
- * }
- */
-router.post("/:buyerAddress/:jobId/fail", strictLimiter, async (req, res) => {
-  try {
-    const { buyerAddress, jobId } = req.params;
-    const { privateKey } = req.body;
-
-    if (!privateKey) {
-      return res.status(400).json({ error: "Private key is required" });
-    }
-
-    const account = blockchainService.createAccountFromPrivateKey(privateKey);
-    const endTime = Math.floor(Date.now() / 1000);
-
-    const txnHash = await jobService.failJob(
-      account,
-      buyerAddress,
-      Number(jobId),
-      endTime
-    );
-
-    res.json({
-      success: true,
-      transactionHash: txnHash,
-      buyerAddress,
-      jobId: Number(jobId),
-      endTime,
-    });
-  } catch (error: any) {
-    console.error("Fail job error:", error);
-    res.status(500).json({ error: error.message || "Failed to fail job" });
-  }
-});
-
-/**
- * POST /api/v1/jobs/:buyerAddress/:jobId/cancel
- * Cancel a job (buyer only, only if pending)
- * 
- * Body:
- * {
- *   "privateKey": "buyer_private_key"
- * }
- */
-router.post("/:buyerAddress/:jobId/cancel", strictLimiter, async (req, res) => {
-  try {
-    const { buyerAddress, jobId } = req.params;
-    const { privateKey } = req.body;
-
-    if (!privateKey) {
-      return res.status(400).json({ error: "Private key is required" });
-    }
-
-    const buyer = blockchainService.createAccountFromPrivateKey(privateKey);
-
-    // Verify buyer address matches
-    if (buyer.accountAddress.toString() !== buyerAddress) {
-      return res.status(403).json({ error: "Address does not match private key" });
-    }
-
-    const txnHash = await jobService.cancelJob(buyer, Number(jobId));
-
-    res.json({
-      success: true,
-      transactionHash: txnHash,
-      buyerAddress,
-      jobId: Number(jobId),
-    });
-  } catch (error: any) {
-    console.error("Cancel job error:", error);
-    res.status(500).json({ error: error.message || "Failed to cancel job" });
-  }
-});
-
-/**
  * GET /api/v1/jobs/:buyerAddress/:jobId/duration
- * Get job duration
+ * Get job duration from blockchain
  */
 router.get("/:buyerAddress/:jobId/duration", generalLimiter, async (req, res) => {
   try {
@@ -315,7 +285,7 @@ router.get("/:buyerAddress/:jobId/duration", generalLimiter, async (req, res) =>
 
 /**
  * GET /api/v1/jobs/:buyerAddress/:jobId/output
- * Get job output URL
+ * Get job output URL from blockchain
  */
 router.get("/:buyerAddress/:jobId/output", generalLimiter, async (req, res) => {
   try {
@@ -337,5 +307,82 @@ router.get("/:buyerAddress/:jobId/output", generalLimiter, async (req, res) => {
   }
 });
 
-export default router;
+/**
+ * GET /api/v1/jobs/db/active
+ * Get active jobs from database
+ */
+router.get("/db/active", generalLimiter, async (_req, res) => {
+  try {
+    const jobs = await jobRepository.findActive();
+    res.json({
+      success: true,
+      count: jobs.length,
+      jobs,
+    });
+  } catch (error: any) {
+    console.error("Get active jobs error:", error);
+    res.status(500).json({ error: error.message || "Failed to get active jobs" });
+  }
+});
 
+/**
+ * GET /api/v1/jobs/db/buyer/:buyerAddress
+ * Get jobs for a buyer from database
+ */
+router.get("/db/buyer/:buyerAddress", generalLimiter, async (req, res) => {
+  try {
+    const { buyerAddress } = req.params;
+    console.log(`📋 Fetching jobs for buyer: ${buyerAddress}`);
+    
+    const jobs = await jobRepository.findByBuyer(buyerAddress);
+    console.log(`   Found ${jobs.length} jobs in database`);
+    
+    // Transform database fields (snake_case) to frontend format (camelCase)
+    const transformedJobs = jobs.map((job: any) => ({
+      jobId: job.job_id,
+      buyerAddress: job.buyer_address,
+      providerAddress: job.provider_address,
+      dockerImage: job.docker_image,
+      status: job.status,
+      escrowAmount: Number(job.escrow_amount || 0),
+      maxDuration: job.max_duration || 0,
+      startTime: job.start_time ? Number(job.start_time) : undefined,
+      endTime: job.end_time ? Number(job.end_time) : undefined,
+      outputUrl: job.output_url || undefined,
+    }));
+    
+    console.log(`   Returning ${transformedJobs.length} transformed jobs`);
+    
+    res.json({
+      success: true,
+      buyerAddress,
+      count: transformedJobs.length,
+      jobs: transformedJobs,
+    });
+  } catch (error: any) {
+    console.error("Get buyer jobs error:", error);
+    res.status(500).json({ error: error.message || "Failed to get buyer jobs" });
+  }
+});
+
+/**
+ * GET /api/v1/jobs/db/provider/:providerAddress
+ * Get jobs for a provider from database
+ */
+router.get("/db/provider/:providerAddress", generalLimiter, async (req, res) => {
+  try {
+    const { providerAddress } = req.params;
+    const jobs = await jobRepository.findByProvider(providerAddress);
+    res.json({
+      success: true,
+      providerAddress,
+      count: jobs.length,
+      jobs,
+    });
+  } catch (error: any) {
+    console.error("Get provider jobs error:", error);
+    res.status(500).json({ error: error.message || "Failed to get provider jobs" });
+  }
+});
+
+export default router;
