@@ -31,13 +31,21 @@ export function ProviderRegister() {
     const loadMinStake = async () => {
       try {
         const data = await providerApi.getMinStake();
-        setMinStake(data.minStakeAmountMOVE);
-        setFormData((prev) => ({
-          ...prev,
-          stakeAmount: data.minStakeAmountMOVE.toString(),
-        }));
+        if (data?.minStakeAmountMOVE !== undefined) {
+          setMinStake(data.minStakeAmountMOVE);
+          setFormData((prev) => ({
+            ...prev,
+            stakeAmount: String(data.minStakeAmountMOVE),
+          }));
+        }
       } catch (err) {
         console.error('Failed to load min stake:', err);
+        // Set a default stake amount when API fails
+        setMinStake(1);
+        setFormData((prev) => ({
+          ...prev,
+          stakeAmount: '1',
+        }));
       }
     };
 
