@@ -126,28 +126,10 @@ export function ProviderRegister() {
   return (
     <div className="max-w-3xl mx-auto space-y-6 animate-fade-in">
       <div className="text-center space-y-2">
-        <h1 className="text-4xl font-bold gradient-text">Register as Provider</h1>
+        <h1 className="text-4xl font-bold text-white">Register as Provider</h1>
         <p className="text-gray-400">
           Register your GPU to start earning from compute jobs
         </p>
-      </div>
-
-      {/* Wallet Connection */}
-      <div className="card-modern">
-        <div className="flex items-center space-x-3 mb-4">
-          <div className="p-2 bg-gradient-to-br from-purple-500/20 to-purple-600/20 rounded-lg">
-            <svg className="w-5 h-5 text-purple-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 9V7a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2m2 4h10a2 2 0 002-2v-6a2 2 0 00-2-2H9a2 2 0 00-2 2v6a2 2 0 002 2zm7-5a2 2 0 11-4 0 2 2 0 014 0z" />
-            </svg>
-          </div>
-          <h2 className="text-xl font-bold text-white">Wallet Connection</h2>
-        </div>
-        <WalletConnect 
-          onConnectionChange={(isConnected, address) => {
-            setConnected(isConnected);
-            setWalletAddress(address);
-          }}
-        />
       </div>
 
       <div className="card-modern">

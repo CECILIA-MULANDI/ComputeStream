@@ -9,6 +9,7 @@ export function JobCreate() {
   const [searchParams] = useSearchParams();
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [walletConnected, setWalletConnected] = useState(getWalletState().connected);
   const [providers, setProviders] = useState<Provider[]>([]);
   const [selectedProvider, setSelectedProvider] = useState<Provider | null>(null);
   const [formData, setFormData] = useState({
@@ -20,6 +21,7 @@ export function JobCreate() {
   // Check wallet connection on mount
   useEffect(() => {
     const state = getWalletState();
+    setWalletConnected(state.connected);
     if (!state.connected) {
       setError('Please connect your wallet in the navigation bar to create a job.');
     }
@@ -160,31 +162,33 @@ export function JobCreate() {
     : 0;
 
   return (
-    <div className="max-w-3xl mx-auto space-y-6 animate-fade-in">
-      <div className="text-center space-y-2">
-        <h1 className="text-4xl font-bold gradient-text">Create Compute Job</h1>
-        <p className="text-gray-400">
-          Create a new compute job with x402 payment verification
+    <div className="max-w-3xl mx-auto space-y-8 animate-fade-in py-12 px-4">
+      <div className="text-center space-y-4">
+        <h1 className="text-5xl font-bold text-white tracking-tight font-display">Create Compute Job</h1>
+        <p className="text-gray-400 font-sans max-w-lg mx-auto">
+          Deploy high-performance compute workloads instantly with x402 payment verification
         </p>
       </div>
 
-
-      <div className="card-modern">
-        <form onSubmit={handleSubmit} className="space-y-6">
+      <div className="card-modern relative overflow-hidden">
+        {/* Subtle decorative flare inside card */}
+        <div className="absolute top-0 right-0 w-32 h-32 bg-primary-500/5 blur-3xl pointer-events-none"></div>
+        
+        <form onSubmit={handleSubmit} className="space-y-8">
           {error && (
-            <div className="p-4 bg-red-500/10 border border-red-500/30 rounded-xl">
+            <div className="p-4 bg-red-500/10 border border-red-500/30 rounded-2xl animate-fade-in">
               <div className="flex items-start space-x-3">
                 <svg className="w-5 h-5 text-red-400 flex-shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
                 </svg>
-                <h3 className="text-sm font-semibold text-red-400">{error}</h3>
+                <h3 className="text-sm font-semibold text-red-400 font-sans">{error}</h3>
               </div>
             </div>
           )}
 
-          <div>
-            <label htmlFor="providerAddress" className="block text-sm font-semibold text-gray-300 mb-2">
-              Provider Address
+          <div className="space-y-2">
+            <label htmlFor="providerAddress" className="block text-xs font-bold text-gray-500 uppercase tracking-widest font-accent">
+              Select GPU Provider
             </label>
             <select
               id="providerAddress"
@@ -195,35 +199,40 @@ export function JobCreate() {
                 const provider = providers.find((p) => p.address === e.target.value);
                 setSelectedProvider(provider || null);
               }}
-              className="input-modern"
+              className="input-modern font-sans bg-[#08080a] border-white/10"
             >
-              <option value="">Select a provider</option>
+              <option value="" className="bg-[#08080a]">Choose a provider...</option>
               {providers.map((provider) => (
-                <option key={provider.address} value={provider.address}>
-                  {provider.gpuType} - {provider.address.slice(0, 10)}... ({provider.isActive ? 'Active' : 'Inactive'})
+                <option key={provider.address} value={provider.address} className="bg-[#08080a]">
+                  {provider.gpuType} • {provider.address.slice(0, 10)}... ({provider.isActive ? 'Active' : 'Inactive'})
                 </option>
               ))}
             </select>
+            
             {selectedProvider && (
-              <div className="mt-3 p-4 glass-dark border border-white/10">
-                <div className="space-y-2">
-                  <div className="text-lg font-bold text-white">{selectedProvider.gpuType}</div>
-                  <div className="flex items-center space-x-4 text-sm text-gray-300">
-                    <span>{selectedProvider.vramGB} GB VRAM</span>
-                    <span>·</span>
-                    <span>{selectedProvider.reputationScore} reputation</span>
+              <div className="mt-4 p-5 bg-white/5 border border-white/5 rounded-2xl animate-slide-up">
+                <div className="flex justify-between items-start">
+                  <div>
+                    <div className="text-lg font-bold text-white font-display mb-1">{selectedProvider.gpuType}</div>
+                    <div className="flex items-center space-x-4 text-xs font-accent uppercase tracking-wider text-gray-500">
+                      <span className="flex items-center"><div className="w-2 h-2 bg-blue-500 rounded-full mr-2 opacity-50"></div>{selectedProvider.vramGB} GB VRAM</span>
+                      <span className="flex items-center"><div className="w-2 h-2 bg-green-500 rounded-full mr-2 opacity-50"></div>{selectedProvider.reputationScore} Rep</span>
+                    </div>
                   </div>
-                  <div className="text-sm font-semibold text-primary-400">
-                    Price: {(selectedProvider.pricePerSecond / 100000000).toFixed(8)} MOVE/sec
+                  <div className="text-right">
+                    <p className="text-[10px] font-bold text-gray-500 uppercase tracking-widest font-accent mb-1">Price / Sec</p>
+                    <div className="text-lg font-bold text-primary-400 font-display">
+                      {(selectedProvider.pricePerSecond / 100000000).toFixed(8)} MOVE
+                    </div>
                   </div>
                 </div>
               </div>
             )}
           </div>
 
-          <div>
-            <label htmlFor="dockerImage" className="block text-sm font-semibold text-gray-300 mb-2">
-              Docker Image
+          <div className="space-y-2">
+            <label htmlFor="dockerImage" className="block text-xs font-bold text-gray-500 uppercase tracking-widest font-accent">
+              Container Configuration
             </label>
             <input
               type="text"
@@ -231,63 +240,74 @@ export function JobCreate() {
               required
               value={formData.dockerImage}
               onChange={(e) => setFormData({ ...formData, dockerImage: e.target.value })}
-              className="input-modern"
-              placeholder="my-image:latest"
+              className="input-modern font-mono text-sm bg-[#08080a] border-white/10"
+              placeholder="e.g. nvidia/cuda:11.0-base"
             />
+            <p className="text-[10px] text-gray-500 font-sans pl-1">Specify the public Docker image for your workload</p>
           </div>
 
-          <div>
-            <label htmlFor="duration" className="block text-sm font-semibold text-gray-300 mb-2">
-              Duration (seconds)
+          <div className="space-y-2">
+            <label htmlFor="duration" className="block text-xs font-bold text-gray-500 uppercase tracking-widest font-accent">
+              Session Duration (Seconds)
             </label>
-            <input
-              type="number"
-              id="duration"
-              required
-              min="1"
-              value={formData.duration}
-              onChange={(e) => setFormData({ ...formData, duration: e.target.value })}
-              className="input-modern"
-            />
-            <p className="mt-2 text-xs text-gray-400">
-              Estimated cost: <span className="font-semibold text-primary-400">{estimatedCost.toFixed(8)} MOVE</span>
-            </p>
+            <div className="relative">
+              <input
+                type="number"
+                id="duration"
+                required
+                min="1"
+                value={formData.duration}
+                onChange={(e) => setFormData({ ...formData, duration: e.target.value })}
+                className="input-modern font-mono bg-[#08080a] border-white/10"
+              />
+              <div className="absolute right-4 top-1/2 -translate-y-1/2 text-[10px] font-bold text-gray-600 uppercase tracking-widest pointer-events-none font-accent">
+                Seconds
+              </div>
+            </div>
+            
+            <div className="mt-4 p-4 bg-primary-500/5 border border-primary-500/10 rounded-2xl flex items-center justify-between">
+              <span className="text-xs font-bold text-gray-500 uppercase tracking-widest font-accent">Estimated Total Cost</span>
+              <span className="text-xl font-bold text-white font-display">{estimatedCost.toFixed(6)} <span className="text-xs opacity-50">MOVE</span></span>
+            </div>
           </div>
 
-          <div className="p-4 bg-gradient-to-r from-primary-500/10 to-purple-500/10 border border-primary-500/30 rounded-xl">
-            <div className="flex items-start space-x-3">
-              <div className="flex-shrink-0 p-2 bg-primary-500/20 rounded-lg">
-                <svg className="w-5 h-5 text-primary-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+          <div className="p-6 bg-[#1a1a1e] border border-white/5 rounded-[24px]">
+            <div className="flex items-start space-x-4">
+              <div className="flex-shrink-0 p-3 bg-white/5 border border-white/5 rounded-xl">
+                <svg className="w-6 h-6 text-primary-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
                 </svg>
               </div>
               <div>
-                <h3 className="text-sm font-semibold text-primary-300 mb-1">x402 Payment Required</h3>
-                <p className="text-sm text-gray-400">
-                  This endpoint requires x402 payment verification. You'll need to pay using the x402 protocol before the job can be created.
+                <h3 className="text-sm font-bold text-white mb-1 font-accent uppercase tracking-widest">x402 Protocol Active</h3>
+                <p className="text-xs text-gray-400 leading-relaxed font-sans">
+                  ComputeStream uses the x402 protocol for secure, real-time micropayments. 
+                  Your funds will be held in escrow and streamed to the provider as your job runs.
                 </p>
               </div>
             </div>
           </div>
 
-          <div className="flex justify-end space-x-3 pt-4 border-t border-white/5">
+          <div className="flex items-center justify-end space-x-4 pt-6 border-t border-white/5">
             <button
               type="button"
               onClick={() => navigate('/providers')}
-              className="btn-secondary"
+              className="btn-secondary px-8 font-accent uppercase tracking-widest text-[11px]"
             >
               Cancel
             </button>
             <button
               type="submit"
               disabled={loading || !walletConnected}
-              className="btn-primary disabled:opacity-50 disabled:cursor-not-allowed"
+              className="btn-primary px-10 shadow-[0_0_30px_rgba(255,255,255,0.05)] font-accent uppercase tracking-widest text-[11px]"
             >
-              {loading ? 'Creating...' : 'Create Job'}
+              {loading ? 'Processing...' : 'Provision GPU'}
             </button>
           </div>
         </form>
       </div>
+    </div>
+  );
     </div>
   );
 }

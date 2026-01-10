@@ -74,7 +74,7 @@ export function WalletConnect({ onConnectionChange, compact = false }: WalletCon
           <button
             onClick={() => handleConnect('razor')}
             disabled={loading}
-            className="h-9 px-4 bg-gradient-primary text-white text-sm font-semibold rounded-lg hover:shadow-lg hover:shadow-primary-500/50 transition-all duration-300 hover:scale-105 active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:scale-100 flex items-center space-x-2"
+            className="h-10 px-6 bg-white text-dark-950 text-sm font-bold rounded-full hover:bg-gray-100 transition-all duration-300 hover:scale-105 active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed flex items-center space-x-2 shadow-[0_0_20px_rgba(255,255,255,0.3)]"
             title={error || 'Connect your wallet'}
           >
             {loading ? (

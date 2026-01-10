@@ -713,79 +713,89 @@ export async function signTransaction(payload: {
     
     console.log('Wallet capabilities:', { hasSignTransaction, hasSignAndSubmit });
     
-    // Nightly wallet expects a specific format - try the format that works for payments
-    // Based on the payment flow, the nested format with functionArguments works
-    const txPayload = {
+    // Build the transaction with SDK to ensure correct network/chain ID
+    let builtTransaction: any = null;
+    const currentAddress = walletState.address;
+    
+    if (currentAddress) {
+      try {
+        console.log('Attempting to build transaction with Aptos SDK for Movement Testnet...');
+        const aptos = getAptosClient();
+        builtTransaction = await aptos.transaction.build.simple({
+          sender: currentAddress,
+          data: {
+            function: payload.function as any,
+            typeArguments: payload.typeArguments as any,
+            functionArguments: stringifiedArgs as any,
+          },
+        });
+        console.log('✅ Transaction built with SDK');
+      } catch (buildError: any) {
+        console.warn('Could not build transaction with SDK (this is okay, will use raw payload):', buildError.message);
+      }
+    }
+
+    // Try multiple possible formats for the wallet
+    const formats = [];
+    
+    // 1. Built transaction (Best - includes chain ID)
+    if (builtTransaction) {
+      formats.push(builtTransaction);
+    }
+    
+    // 2. Nested payload format (Works for payments)
+    formats.push({
       payload: {
         function: payload.function,
         typeArguments: payload.typeArguments,
         functionArguments: stringifiedArgs,
       }
-    };
+    });
     
-    console.log('Trying transaction with payload:', JSON.stringify(txPayload, null, 2));
+    // 3. Inner payload only
+    formats.push({
+      function: payload.function,
+      typeArguments: payload.typeArguments,
+      functionArguments: stringifiedArgs,
+    });
     
+    // 4. Standard Aptos format
+    formats.push({
+      type: 'entry_function_payload',
+      function: payload.function,
+      type_arguments: payload.typeArguments,
+      arguments: stringifiedArgs,
+    });
+
     if (hasSignAndSubmit) {
-      // Try the nested format first (this is what works for payments)
-      try {
-        result = await wallet.signAndSubmitTransaction(txPayload);
-        
-        // Check if result indicates rejection BEFORE trying alternatives
-        if (result && typeof result === 'object' && result.status === 'Rejected') {
-          console.error('Transaction rejected by wallet:', JSON.stringify(result, null, 2));
-          const errorMsg = result?.error || result?.message || result?.reason || '';
-          throw new Error(`Transaction was rejected by your wallet. ${errorMsg ? `Reason: ${errorMsg}` : 'Please approve the transaction when prompted in your wallet popup.'}`);
-        }
-      } catch (e1: any) {
-        // If it's already a rejection error we threw, re-throw it
-        if (e1.message && e1.message.includes('rejected by your wallet')) {
-          throw e1;
-        }
-        
-        console.log('Nested format failed:', e1.message);
-        // Try with just the inner payload
+      for (let i = 0; i < formats.length; i++) {
+        const currentFormat = formats[i];
         try {
-          console.log('Trying inner payload only...');
-          result = await wallet.signAndSubmitTransaction(txPayload.payload);
+          console.log(`Trying transaction format ${i + 1}/${formats.length}`);
+          result = await wallet.signAndSubmitTransaction(currentFormat);
           
-          // Check if result indicates rejection
           if (result && typeof result === 'object' && result.status === 'Rejected') {
-            console.error('Transaction rejected by wallet:', JSON.stringify(result, null, 2));
             const errorMsg = result?.error || result?.message || result?.reason || '';
             throw new Error(`Transaction was rejected by your wallet. ${errorMsg ? `Reason: ${errorMsg}` : 'Please approve the transaction when prompted in your wallet popup.'}`);
           }
-        } catch (e2: any) {
-          // If it's already a rejection error we threw, re-throw it
-          if (e2.message && e2.message.includes('rejected by your wallet')) {
-            throw e2;
+          
+          // If we got here without error, break the loop
+          break;
+        } catch (err: any) {
+          console.log(`Format ${i + 1} failed:`, err.message);
+          
+          // If it's a user rejection, stop trying other formats
+          if (err.message && (err.message.includes('rejected') || err.message.includes('cancelled'))) {
+            throw err;
           }
           
-          console.log('Inner payload failed:', e2.message);
-          // Try standard Aptos format as last resort
-          try {
-            const standardPayload = {
-              type: 'entry_function_payload',
-              function: payload.function,
-              type_arguments: payload.typeArguments,
-              arguments: stringifiedArgs,
-            };
-            console.log('Trying standard format:', JSON.stringify(standardPayload, null, 2));
-            result = await wallet.signAndSubmitTransaction(standardPayload);
-            
-            // Check if result indicates rejection
-            if (result && typeof result === 'object' && result.status === 'Rejected') {
-              console.error('Transaction rejected by wallet:', JSON.stringify(result, null, 2));
-              const errorMsg = result?.error || result?.message || result?.reason || '';
-              throw new Error(`Transaction was rejected by your wallet. ${errorMsg ? `Reason: ${errorMsg}` : 'Please approve the transaction when prompted in your wallet popup.'}`);
+          // If this was the last format, throw the error
+          if (i === formats.length - 1) {
+            let errorMsg = err.message || 'All transaction formats failed';
+            if (errorMsg.includes('mainnet.aptoslabs.com')) {
+              errorMsg = "Your wallet is trying to connect to Aptos Mainnet. Please open your Nightly wallet and switch the network to 'Movement Testnet'.";
             }
-          } catch (e3: any) {
-            // If it's already a rejection error we threw, re-throw it
-            if (e3.message && e3.message.includes('rejected by your wallet')) {
-              throw e3;
-            }
-            
-            console.log('Standard format failed:', e3.message);
-            throw new Error(`All transaction formats failed. Last error: ${e1.message}. Please ensure your wallet is connected to Movement Testnet and the contract is deployed.`);
+            throw new Error(errorMsg);
           }
         }
       }
