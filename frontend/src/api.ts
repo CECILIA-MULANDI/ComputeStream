@@ -1,7 +1,7 @@
 import axios from 'axios';
 import type { Provider, Job } from './types';
 
-const API_BASE_URL = '/api/v1';
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || '/api/v1';
 
 const api = axios.create({
   baseURL: API_BASE_URL,
