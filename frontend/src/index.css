@@ -56,15 +56,16 @@
   }
   
   .btn-primary {
-    @apply px-6 py-3 bg-white text-black font-bold rounded-2xl 
+    @apply px-8 py-3 bg-[#1e3a5f] text-white font-bold rounded-full 
            transition-all duration-300
-           hover:bg-gray-200 active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed;
+           hover:bg-[#2a4a73] 
+           active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed;
     font-family: var(--font-accent);
   }
   
   .btn-secondary {
-    @apply px-6 py-3 bg-[#1a1a1e] border border-white/5 text-white font-semibold rounded-2xl
-           hover:bg-[#222228] transition-all duration-300
+    @apply px-8 py-3 bg-white text-black font-bold rounded-full
+           hover:bg-gray-100 transition-all duration-300
            active:scale-95;
     font-family: var(--font-accent);
   }
@@ -76,7 +77,8 @@
   }
   
   .card-modern {
-    @apply bg-[#121214] border border-white/5 p-8 rounded-[32px] transition-all duration-300;
+    @apply bg-[#121214]/80 backdrop-blur-xl border border-white/[0.03] p-8 rounded-[40px] 
+           transition-all duration-500 hover:border-white/[0.08] hover:bg-[#16161a];
   }
   
   .gradient-text {

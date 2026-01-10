@@ -52,9 +52,9 @@ function Navigation() {
             </Link>
           </div>
 
-          {/* Center: Navigation Links - Perfectly Centered */}
-          <div className="hidden md:flex flex-1 justify-center">
-            <div className="flex items-center space-x-1 bg-white/[0.03] px-1.5 py-1.5 rounded-full border border-white/5 backdrop-blur-md">
+          {/* Center: Navigation Links - Perfectly Centered Pill */}
+          <div className="hidden md:flex flex-1 justify-center pointer-events-none">
+            <div className="flex items-center space-x-1 bg-white/[0.03] px-2 py-2 rounded-full border border-white/5 backdrop-blur-md pointer-events-auto shadow-[0_0_20px_rgba(0,0,0,0.3)]">
               <NavLink to="/">Dashboard</NavLink>
               <NavLink to="/providers">Providers</NavLink>
               <NavLink to="/providers/register">Register</NavLink>
@@ -156,29 +156,12 @@ function App() {
 
   return (
     <Router>
-      <div className="min-h-screen bg-[#08080a] relative overflow-hidden font-sans">
-        {/* Animated background gradients - Accurate Electric Flare effect */}
-        <div className="absolute inset-0 overflow-hidden pointer-events-none">
-          {/* Main vertical flares from the top, inspired by the reference image */}
-          <div className="absolute top-[-15%] left-[52%] -translate-x-1/2 w-[500px] h-[1000px] bg-[#00d2ff]/20 blur-[120px] rotate-[10deg] opacity-80"></div>
-          <div className="absolute top-[-20%] left-[48%] -translate-x-1/2 w-[400px] h-[900px] bg-[#00d2ff]/20 blur-[100px] rotate-[-10deg] opacity-70"></div>
-          
-          {/* Top horizontal glow */}
-          <div className="absolute top-[-5%] left-1/2 -translate-x-1/2 w-[1000px] h-[400px] bg-[#00d2ff]/10 blur-[150px] opacity-40"></div>
-          
-          {/* Subtle deep violet glow on the far left */}
-          <div className="absolute top-[30%] left-[-15%] w-[800px] h-[1000px] bg-[#bd34fe]/15 rounded-full blur-[180px] opacity-60"></div>
-          
-          {/* Subtle electric blue glow on the right */}
-          <div className="absolute top-[20%] right-[-15%] w-[700px] h-[900px] bg-[#00d2ff]/10 rounded-full blur-[160px] opacity-50"></div>
-          
-          {/* Sharp top edge highlight */}
-          <div className="absolute top-0 left-0 right-0 h-[1px] bg-gradient-to-r from-transparent via-white/20 to-transparent opacity-40"></div>
-        </div>
-        
+      <div 
+        className="min-h-screen relative overflow-hidden font-sans selection:bg-primary-500/30 text-gray-100 bg-[#08080a]"
+      >
         <Navigation />
         
-        <main className="relative max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+        <main className="relative z-10 max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
           <Routes>
             <Route path="/" element={<Dashboard />} />
             <Route path="/providers" element={<ProviderList />} />
