@@ -91,9 +91,10 @@ export function ProviderRegister() {
 
       console.log('Registration tx:', txHash);
       
-      // Sync to database
+      // Sync to database using the API client
       try {
-        await fetch('/api/v1/providers/sync', {
+        const apiBaseUrl = import.meta.env.VITE_API_BASE_URL || '/api/v1';
+        await fetch(`${apiBaseUrl}/providers/sync`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
