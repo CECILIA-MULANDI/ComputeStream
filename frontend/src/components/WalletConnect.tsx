@@ -28,7 +28,7 @@ export function WalletConnect({ onConnectionChange, compact = false }: WalletCon
     onConnectionChange?.(state.connected, state.address);
   }, []);
 
-  const handleConnect = async (walletType: WalletType = 'razor') => {
+  const handleConnect = async (walletType: WalletType = 'nightly') => {
     try {
       setLoading(true);
       setError(null);
@@ -72,7 +72,7 @@ export function WalletConnect({ onConnectionChange, compact = false }: WalletCon
       <div className="wallet-connect h-full flex items-center">
         {!connected ? (
           <button
-            onClick={() => handleConnect('razor')}
+            onClick={() => handleConnect('nightly')}
             disabled={loading}
             className="h-10 px-6 bg-white text-dark-950 text-sm font-bold rounded-full hover:bg-gray-100 transition-all duration-300 hover:scale-105 active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed flex items-center space-x-2 shadow-[0_0_20px_rgba(255,255,255,0.3)]"
             title={error || 'Connect your wallet'}
@@ -135,7 +135,7 @@ export function WalletConnect({ onConnectionChange, compact = false }: WalletCon
       {!connected ? (
         <div className="space-y-4">
           <button
-            onClick={() => handleConnect('razor')}
+            onClick={() => handleConnect('nightly')}
             disabled={loading}
             className="btn-primary w-full flex items-center justify-center space-x-2 disabled:opacity-50 disabled:cursor-not-allowed"
           >

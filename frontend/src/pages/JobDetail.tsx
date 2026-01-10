@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useParams } from 'react-router-dom';
+import { useParams, Link } from 'react-router-dom';
 import { jobApi, paymentStreamApi } from '../api';
 import type { Job, PaymentStream } from '../types';
 
@@ -39,6 +39,7 @@ export function JobDetail() {
   };
 
   const formatAddress = (address: string) => {
+    if (!address) return 'N/A';
     return `${address.slice(0, 10)}...${address.slice(-8)}`;
   };
 
@@ -85,7 +86,7 @@ export function JobDetail() {
       <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
         <div>
           <h1 className="text-4xl font-bold text-white tracking-tight">Job Details</h1>
-          <p className="mt-2 text-gray-400 font-mono text-sm opacity-60">ID: {job.job_id || job.jobId}</p>
+          <p className="mt-2 text-gray-400 font-mono text-sm opacity-60">ID: {job.jobId}</p>
         </div>
         <button onClick={loadJobData} className="btn-secondary flex items-center space-x-2">
           <svg className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -111,23 +112,23 @@ export function JobDetail() {
 
               <div className="flex justify-between items-center py-3 border-b border-white/5">
                 <span className="text-gray-400 font-medium font-accent uppercase tracking-wider text-xs">Provider Address</span>
-                <span className="text-white font-mono text-sm">{formatAddress(job.provider_address || job.providerAddress)}</span>
+                <span className="text-white font-mono text-sm">{formatAddress(job.providerAddress)}</span>
               </div>
 
               <div className="flex justify-between items-center py-3 border-b border-white/5">
                 <span className="text-gray-400 font-medium font-accent uppercase tracking-wider text-xs">Docker Image</span>
-                <span className="text-white font-mono text-sm">{job.docker_image || job.dockerImage}</span>
+                <span className="text-white font-mono text-sm">{job.dockerImage}</span>
               </div>
 
               <div className="flex justify-between items-center py-3 border-b border-white/5">
                 <span className="text-gray-400 font-medium font-accent uppercase tracking-wider text-xs">Max Duration</span>
-                <span className="text-white font-bold">{job.max_duration || job.maxDuration} seconds</span>
+                <span className="text-white font-bold">{job.maxDuration} seconds</span>
               </div>
 
               <div className="flex justify-between items-center py-3">
                 <span className="text-gray-400 font-medium font-accent uppercase tracking-wider text-xs">Escrow Amount</span>
                 <span className="text-white font-bold text-lg font-display">
-                  {((Number(job.escrow_amount || job.escrowAmount)) / 100000000).toFixed(6)} MOVE
+                  {((Number(job.escrowAmount)) / 100000000).toFixed(6)} MOVE
                 </span>
               </div>
             </div>

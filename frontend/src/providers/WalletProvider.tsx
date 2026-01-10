@@ -8,8 +8,6 @@ export const WalletProvider = ({ children }: PropsWithChildren) => {
       autoConnect={true}
       dappConfig={{
         network: Network.CUSTOM,
-        fullNode: "https://testnet.movementnetwork.xyz/v1",
-        indexer: "https://testnet.movementnetwork.xyz/v1/graphql",
         aptosConnectDappId: "computestream-dapp",
       }}
       onError={(error) => {

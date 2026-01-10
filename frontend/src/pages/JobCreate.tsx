@@ -308,7 +308,5 @@ export function JobCreate() {
       </div>
     </div>
   );
-    </div>
-  );
 }
 

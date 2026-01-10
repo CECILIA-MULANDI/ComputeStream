@@ -5,7 +5,6 @@ import {
   getWalletState,
   signTransaction,
 } from '../services/walletIntegration';
-import { WalletConnect } from '../components/WalletConnect';
 
 export function ProviderRegister() {
   const navigate = useNavigate();
