@@ -5,6 +5,7 @@ import {
   getWalletState,
   signTransaction,
 } from '../services/walletIntegration';
+import { WalletConnect } from '../components/WalletConnect';
 
 export function ProviderRegister() {
   const navigate = useNavigate();
@@ -123,139 +124,137 @@ export function ProviderRegister() {
   };
 
   return (
-    <div className="px-4 py-6 sm:px-0">
-      <div className="max-w-2xl mx-auto">
-        <div className="mb-8">
-          <h1 className="text-3xl font-bold text-gray-900">Register as Provider</h1>
-          <p className="mt-1 text-sm text-gray-500">
-            Register your GPU to start earning from compute jobs
-          </p>
-        </div>
+    <div className="max-w-3xl mx-auto space-y-6 animate-fade-in">
+      <div className="text-center space-y-2">
+        <h1 className="text-4xl font-bold gradient-text">Register as Provider</h1>
+        <p className="text-gray-400">
+          Register your GPU to start earning from compute jobs
+        </p>
+      </div>
 
-        {!connected && (
-          <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4 mb-6">
-            <p className="text-yellow-800">
-              ⚠️ Please connect your wallet in the navigation bar to register as a provider.
-            </p>
+      {/* Wallet Connection */}
+      <div className="card-modern">
+        <div className="flex items-center space-x-3 mb-4">
+          <div className="p-2 bg-gradient-to-br from-purple-500/20 to-purple-600/20 rounded-lg">
+            <svg className="w-5 h-5 text-purple-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 9V7a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2m2 4h10a2 2 0 002-2v-6a2 2 0 00-2-2H9a2 2 0 00-2 2v6a2 2 0 002 2zm7-5a2 2 0 11-4 0 2 2 0 014 0z" />
+            </svg>
           </div>
-        )}
+          <h2 className="text-xl font-bold text-white">Wallet Connection</h2>
+        </div>
+        <WalletConnect 
+          onConnectionChange={(isConnected, address) => {
+            setConnected(isConnected);
+            setWalletAddress(address);
+          }}
+        />
+      </div>
 
-        <div className="bg-white shadow rounded-lg">
-          <form onSubmit={handleSubmit} className="p-6 space-y-6">
-            {error && (
-              <div className="rounded-md bg-red-50 p-4">
-                <div className="flex">
-                  <div className="flex-shrink-0">
-                    <svg
-                      className="h-5 w-5 text-red-400"
-                      viewBox="0 0 20 20"
-                      fill="currentColor"
-                    >
-                      <path
-                        fillRule="evenodd"
-                        d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z"
-                        clipRule="evenodd"
-                      />
-                    </svg>
-                  </div>
-                  <div className="ml-3 flex-1">
-                    <h3 className="text-sm font-medium text-red-800 mb-2">Registration Failed</h3>
-                    <pre className="text-xs text-red-700 whitespace-pre-wrap break-words font-mono bg-red-100 p-2 rounded overflow-auto max-h-64">
-                      {error}
-                    </pre>
-                  </div>
+      <div className="card-modern">
+        <form onSubmit={handleSubmit} className="space-y-6">
+          {error && (
+            <div className="p-4 bg-red-500/10 border border-red-500/30 rounded-xl">
+              <div className="flex items-start space-x-3">
+                <svg className="w-5 h-5 text-red-400 flex-shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
+                <div className="flex-1">
+                  <h3 className="text-sm font-semibold text-red-400 mb-1">Registration Failed</h3>
+                  <pre className="text-xs text-red-300 whitespace-pre-wrap break-words font-mono bg-red-500/10 p-3 rounded-lg overflow-auto max-h-48">
+                    {error}
+                  </pre>
                 </div>
               </div>
-            )}
-
-            <div>
-              <label htmlFor="gpuType" className="block text-sm font-medium text-gray-700">
-                GPU Type
-              </label>
-              <input
-                type="text"
-                id="gpuType"
-                required
-                value={formData.gpuType}
-                onChange={(e) => setFormData({ ...formData, gpuType: e.target.value })}
-                className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 sm:text-sm"
-                placeholder="e.g., RTX 4090, A100, H100"
-              />
             </div>
+          )}
 
-            <div>
-              <label htmlFor="vramGB" className="block text-sm font-medium text-gray-700">
-                VRAM (GB)
-              </label>
-              <input
-                type="number"
-                id="vramGB"
-                required
-                min="1"
-                value={formData.vramGB}
-                onChange={(e) => setFormData({ ...formData, vramGB: e.target.value })}
-                className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 sm:text-sm"
-                placeholder="24"
-              />
-            </div>
+          <div>
+            <label htmlFor="gpuType" className="block text-sm font-semibold text-gray-300 mb-2">
+              GPU Type
+            </label>
+            <input
+              type="text"
+              id="gpuType"
+              required
+              value={formData.gpuType}
+              onChange={(e) => setFormData({ ...formData, gpuType: e.target.value })}
+              className="input-modern"
+              placeholder="e.g., RTX 4090, A100, H100"
+            />
+          </div>
 
-            <div>
-              <label htmlFor="pricePerSecond" className="block text-sm font-medium text-gray-700">
-                Price Per Second (MOVE)
-              </label>
-              <input
-                type="number"
-                id="pricePerSecond"
-                required
-                min="0"
-                step="0.00000001"
-                value={formData.pricePerSecond}
-                onChange={(e) => setFormData({ ...formData, pricePerSecond: e.target.value })}
-                className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 sm:text-sm"
-                placeholder="0.0001"
-              />
-              <p className="mt-1 text-xs text-gray-500">
-                Price in MOVE tokens per second of compute
-              </p>
-            </div>
+          <div>
+            <label htmlFor="vramGB" className="block text-sm font-semibold text-gray-300 mb-2">
+              VRAM (GB)
+            </label>
+            <input
+              type="number"
+              id="vramGB"
+              required
+              min="1"
+              value={formData.vramGB}
+              onChange={(e) => setFormData({ ...formData, vramGB: e.target.value })}
+              className="input-modern"
+              placeholder="24"
+            />
+          </div>
 
-            <div>
-              <label htmlFor="stakeAmount" className="block text-sm font-medium text-gray-700">
-                Stake Amount (MOVE)
-              </label>
-              <input
-                type="number"
-                id="stakeAmount"
-                required
-                min={minStake || 0}
-                step="0.1"
-                value={formData.stakeAmount}
-                onChange={(e) => setFormData({ ...formData, stakeAmount: e.target.value })}
-                className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 sm:text-sm"
-              />
-              <p className="mt-1 text-xs text-gray-500">
-                Minimum stake: {minStake !== null ? `${minStake} MOVE` : 'Loading...'}
-              </p>
-            </div>
+          <div>
+            <label htmlFor="pricePerSecond" className="block text-sm font-semibold text-gray-300 mb-2">
+              Price Per Second (MOVE)
+            </label>
+            <input
+              type="number"
+              id="pricePerSecond"
+              required
+              min="0"
+              step="0.00000001"
+              value={formData.pricePerSecond}
+              onChange={(e) => setFormData({ ...formData, pricePerSecond: e.target.value })}
+              className="input-modern"
+              placeholder="0.0001"
+            />
+            <p className="mt-2 text-xs text-gray-400">
+              Price in MOVE tokens per second of compute
+            </p>
+          </div>
 
-            <div className="flex justify-end space-x-3">
-              <button
-                type="button"
-                onClick={() => navigate('/providers')}
-                className="px-4 py-2 border border-gray-300 rounded-md shadow-sm text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500"
-              >
-                Cancel
-              </button>
-              <button
-                type="submit"
-                disabled={loading}
-                className="px-4 py-2 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-primary-600 hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500 disabled:opacity-50"
-              >
-                {loading ? 'Registering...' : 'Register Provider'}
-              </button>
-            </div>
-          </form>
-        </div>
+          <div>
+            <label htmlFor="stakeAmount" className="block text-sm font-semibold text-gray-300 mb-2">
+              Stake Amount (MOVE)
+            </label>
+            <input
+              type="number"
+              id="stakeAmount"
+              required
+              min={minStake || 0}
+              step="0.1"
+              value={formData.stakeAmount}
+              onChange={(e) => setFormData({ ...formData, stakeAmount: e.target.value })}
+              className="input-modern"
+            />
+            <p className="mt-2 text-xs text-gray-400">
+              Minimum stake: {minStake !== null ? `${minStake} MOVE` : 'Loading...'}
+            </p>
+          </div>
+
+          <div className="flex justify-end space-x-3 pt-4 border-t border-white/5">
+            <button
+              type="button"
+              onClick={() => navigate('/providers')}
+              className="btn-secondary"
+            >
+              Cancel
+            </button>
+            <button
+              type="submit"
+              disabled={loading || !connected}
+              className="btn-primary disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {loading ? 'Registering...' : 'Register Provider'}
+            </button>
+          </div>
+        </form>
       </div>
     </div>
   );
